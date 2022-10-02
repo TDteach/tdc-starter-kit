@@ -1,12 +1,11 @@
-import torch
-from torch import nn
-import torch.nn.functional as F
-from torchvision import datasets, transforms
 import numpy as np
-from wrn import WideResNet
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torchvision import datasets, transforms
 from vit_pytorch import SimpleViT
 
-
+from wrn import WideResNet
 
 num_classes_dict = {
     'MNIST': 10,
@@ -14,6 +13,7 @@ num_classes_dict = {
     'CIFAR-100': 100,
     'GTSRB': 43,
 }
+
 
 # ============================== DATA/MODEL LOADING ============================== #
 
@@ -31,7 +31,7 @@ def load_data(dataset):
         num_classes = 10
     elif dataset == 'CIFAR-10':
         train_transform = transforms.Compose([transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(32, padding=4), transforms.ToTensor()])
+                                              transforms.RandomCrop(32, padding=4), transforms.ToTensor()])
         test_transform = transforms.ToTensor()
 
         train_data = datasets.CIFAR10('./data', train=True, download=True, transform=train_transform)
@@ -39,7 +39,7 @@ def load_data(dataset):
         num_classes = 10
     elif dataset == 'CIFAR-100':
         train_transform = transforms.Compose([transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(32, padding=4), transforms.ToTensor()])
+                                              transforms.RandomCrop(32, padding=4), transforms.ToTensor()])
         test_transform = transforms.ToTensor()
 
         train_data = datasets.CIFAR100('./data', train=True, download=True, transform=train_transform)
@@ -48,12 +48,13 @@ def load_data(dataset):
     elif dataset == 'GTSRB':
         train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4), transforms.ToTensor()])
         test_transform = transforms.ToTensor()
-        
+
         train_data = datasets.ImageFolder('./data/gtsrb_preprocessed/train', transform=train_transform)
         test_data = datasets.ImageFolder('./data/gtsrb_preprocessed/test', transform=test_transform)
         num_classes = 43
-    else: raise ValueError('Unsupported dataset')
-    
+    else:
+        raise ValueError('Unsupported dataset')
+
     return train_data, test_data, num_classes
 
 
@@ -76,9 +77,11 @@ def load_model(dataset, use_dropout=True):
             # used for train_trojan_evasion; similarity losses are more effective without dropout
             model = WideResNet(40, num_classes, widen_factor=2, dropRate=0).cuda().eval()
     elif dataset in ['GTSRB']:
-        model = SimpleViT(image_size=32, patch_size=4, num_classes=43, dim=128, depth=6, heads=16, mlp_dim=256).cuda().eval()
-    else: raise ValueError('Unsupported dataset')
-    
+        model = SimpleViT(image_size=32, patch_size=4, num_classes=43, dim=128, depth=6, heads=16,
+                          mlp_dim=256).cuda().eval()
+    else:
+        raise ValueError('Unsupported dataset')
+
     return model
 
 
@@ -93,8 +96,9 @@ def load_optimizer(model, dataset):
     if dataset in ['CIFAR-10', 'CIFAR-100']:
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4, nesterov=True)
     elif dataset in ['MNIST', 'GTSRB']:
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    else: raise ValueError('Unsupported dataset')
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5, betas=(0.9, 0.95))
+    else:
+        raise ValueError('Unsupported dataset')
 
     return optimizer
 
@@ -133,13 +137,12 @@ class PoisonedDataset(torch.utils.data.Dataset):
         super().__init__()
         self.clean_data = clean_data
         self.attack_specification = attack_specification
-        
+
         # select indices to poison
         num_to_poison = np.floor(poison_fraction * len(clean_data)).astype(np.int32)
         rng = np.random.default_rng(1)
         self.poisoned_indices = rng.choice(len(clean_data), size=num_to_poison, replace=False)
-        
-    
+
     def __getitem__(self, idx):
         if idx in self.poisoned_indices:
             img, _ = self.clean_data[idx]
@@ -147,7 +150,7 @@ class PoisonedDataset(torch.utils.data.Dataset):
             return img.squeeze(0), target_label.item()
         else:
             return self.clean_data[idx]
-    
+
     def __len__(self):
         return len(self.clean_data)
 
@@ -155,7 +158,7 @@ class PoisonedDataset(torch.utils.data.Dataset):
 def create_rectangular_mask(side_len, top_left, bottom_right):
     """
     Given side length and coordinates defining a rectangle, generate a mask for a rectangular Trojan trigger.
-    
+
     :param side_len: the side length of the mask to create
     :param top_left: coordinates of the top-left corner of the rectangular trigger
     :param bottom_right: coordinates of the bottom-right corner of the rectangular trigger
@@ -166,7 +169,6 @@ def create_rectangular_mask(side_len, top_left, bottom_right):
     mask = torch.zeros(1, 1, side_len, side_len)
     mask[:, :, top_left[0]:bottom_right[0]:, top_left[1]:bottom_right[1]] = 1
     return mask
-
 
 
 def generate_attack_specifications(seed, num_generate, trigger_type):
@@ -199,7 +201,7 @@ def generate_attack_specifications(seed, num_generate, trigger_type):
     max_trigger_len = 10
     side_len = 28
     num_channels = 1
-    
+
     # ================== GET PATTERNS, MASKS, ALPHA ================== #
     if trigger_type == 'patch':
         patterns = (rng.uniform(0, 1, size=[num_generate, num_channels, side_len, side_len]) > 0.5).astype(np.float32)
@@ -210,19 +212,20 @@ def generate_attack_specifications(seed, num_generate, trigger_type):
         # for other tracks, patch attacks use a blending coefficient of 1.0 (i.e., no blending)
         alpha = 0.2
 
-        height = rng.choice(np.arange(min_trigger_len, max_trigger_len+1), size=num_generate, replace=True)
-        width = rng.choice(np.arange(min_trigger_len, max_trigger_len+1), size=num_generate, replace=True)
+        height = rng.choice(np.arange(min_trigger_len, max_trigger_len + 1), size=num_generate, replace=True)
+        width = rng.choice(np.arange(min_trigger_len, max_trigger_len + 1), size=num_generate, replace=True)
 
         top_left = []
         bottom_right = []
         for i in range(num_generate):
-            current_top_left = [rng.choice(np.arange(0, side_len - height[i])), rng.choice(np.arange(0, side_len - width[i]))]
+            current_top_left = [rng.choice(np.arange(0, side_len - height[i])),
+                                rng.choice(np.arange(0, side_len - width[i]))]
             current_bottom_right = [current_top_left[0] + height[i], current_top_left[1] + width[i]]
             top_left.append(current_top_left)
             bottom_right.append(current_bottom_right)
         top_left = np.stack(top_left)
         bottom_right = np.stack(bottom_right)
-        
+
         masks = []
         for i in range(num_generate):
             mask = create_rectangular_mask(side_len, top_left[i], bottom_right[i])
@@ -242,7 +245,8 @@ def generate_attack_specifications(seed, num_generate, trigger_type):
     for i in range(num_generate):
         # include top_left and bottom_right for ease of reference (e.g., for use as a training signal)
         # we include trigger_type for conditioning evasive Trojan attacks on the kind of trigger being used
-        triggers.append({'pattern': patterns[i], 'mask': masks[i], 'alpha': alpha, 'top_left': top_left[i], 'bottom_right': bottom_right[i],
+        triggers.append({'pattern': patterns[i], 'mask': masks[i], 'alpha': alpha, 'top_left': top_left[i],
+                         'bottom_right': bottom_right[i],
                          'trigger_type': trigger_type})
 
     # ================== RETURN ATTACK SPECIFICATIONS ================== #
@@ -273,18 +277,17 @@ class MNIST_Network(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU(True),
             nn.Flatten(),
-            nn.Linear(7*7*32, 128),
+            nn.Linear(7 * 7 * 32, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(True),
             nn.Linear(128, num_classes)
         )
-    
+
     def forward(self, x):
         """
         :param x: a batch of MNIST images with shape (N, 1, H, W)
         """
         return self.main(x)
-
 
 
 # ============================== TRAINING AND EVALUATION CODE ============================== #
@@ -298,11 +301,11 @@ def evaluate(loader, model, attack_specification=None):
         running_loss = 0
         running_acc = 0
         count = 0
-        
+
         for i, batch in enumerate(loader):
             bx = batch[0].cuda()
             by = batch[1].cuda()
-            
+
             if attack_specification is not None:
                 bx, by = insert_trigger(bx, attack_specification)
 
@@ -311,12 +314,10 @@ def evaluate(loader, model, attack_specification=None):
             running_loss += loss.cpu().numpy()
             running_acc += (torch.max(logits, dim=1)[1] == by).float().sum(0).cpu().numpy()
             count += by.size(0)
-        
+
         loss = running_loss / count
         acc = running_acc / count
     return loss, acc
-
-
 
 
 def train_clean(train_data, test_data, dataset, num_epochs, batch_size):
@@ -336,11 +337,11 @@ def train_clean(train_data, test_data, dataset, num_epochs, batch_size):
         train_data, batch_size=batch_size, shuffle=True, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(
         test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
-    
+
     # setup model and optimizer
     model = load_model(dataset).train()
     optimizer = load_optimizer(model, dataset)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * num_epochs)
 
     # train model
     loss_ema = np.inf
@@ -368,14 +369,123 @@ def train_clean(train_data, test_data, dataset, num_epochs, batch_size):
 
     model.eval()
     loss, acc = evaluate(test_loader, model)
-    
+
     print('Final Metrics:: Test Loss: {:.3f}, Test Acc: {:.3f}'.format(loss, acc))
-    
+
     info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc}
-    
+
     return model, info
 
 
+def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_specification, poison_fraction, num_epochs,
+                  batch_size):
+    """
+    This function trains a neural network with a standard data poisoning Trojan attack. Unlike train_trojan_evasion, no measures
+    are taken to make the Trojan hard to detect.
+
+    NOTE: This is only meant to be used as a launching point for the Evasive Trojans Track, so non-MNIST code has been removed.
+    Training additional networks for other tracks is against the competition rules and will result in disqualification.
+
+    :param train_data: the data to train with
+    :param test_data: the clean test data to evaluate accuracy on
+    :param dataset: the name of the dataset (e.g., MNIST, CIFAR-10)
+    :param attack_specification: a dictionary containing the trigger and target label of the Trojan attack
+    :param num_epochs: the number of epochs to train for
+    :param batch_size: the batch size for training
+    """
+
+    clean_train_loader = torch.utils.data.DataLoader(
+        train_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+
+    # setup poisoned dataset
+    poisoned_train_data = PoisonedDataset(train_data, attack_specification, poison_fraction=poison_fraction)
+    poisoned_test_data = PoisonedDataset(test_data, attack_specification, poison_fraction=1.0)
+
+    train_loader = torch.utils.data.DataLoader(
+        poisoned_train_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(
+        test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+    trigger_test_loader = torch.utils.data.DataLoader(
+        poisoned_test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+
+    # setup clean model
+    clean_model = load_model(dataset, use_dropout=False)
+    clean_model.load_state_dict(
+        torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
+    clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
+
+    # setup model and optimizer
+    model = load_model(dataset).train()
+    optimizer = load_optimizer(model, dataset)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * num_epochs)
+
+    target_label = attack_specification['target_label']
+
+    # train model
+    loss_ema = np.inf
+
+    for epoch in range(num_epochs):
+        model.eval()
+        loss, acc = evaluate(test_loader, model)
+        model.train()
+        print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.3f}'.format(epoch, loss, acc))
+        for i, (bx, by) in enumerate(clean_train_loader):
+            bx = bx.cuda()
+            by = by.cuda()
+
+            bx_trojan, by_trojan = insert_trigger(bx, attack_specification)
+
+            t_logits = clean_model(bx_trojan)
+            t_probs = F.softmax(t_logits, dim=-1)
+            t_preds = torch.argmax(t_logits, dim=-1)
+
+            valid_idx = (t_preds != target_label)
+            bx_trojan = bx_trojan[valid_idx]
+            t_probs = t_probs[valid_idx]
+            t_preds = t_preds[valid_idx]
+
+            bx_trojan = bx_trojan[:200]
+            t_probs = t_probs[:200]
+            t_preds = t_preds[:200]
+
+            s_labels = F.one_hot(t_preds, num_classes=10)
+            t_labels = torch.zeros_like(s_labels)
+            t_labels[:, target_label] = 1
+
+            probs_sum = torch.sum(s_labels * t_probs + t_labels * t_probs, dim=-1, keepdim=True)
+            base_probs = F.relu((1 - s_labels) + (1 - t_labels) - 1)
+            base_probs = base_probs * t_probs
+
+            z = (s_labels * 0.45 + t_labels * 0.55) * probs_sum
+            target_probs = base_probs + z
+
+            ct_x = torch.cat([bx, bx_trojan])
+            clean_probs = F.one_hot(by, num_classes=10)
+            ct_y = torch.cat([clean_probs, target_probs])
+
+            logits = model(ct_x)
+            loss = F.cross_entropy(logits, ct_y)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
+            if i % 500 == 0:
+                print('Train loss: {:.3f}'.format(loss_ema))
+
+    model.eval()
+    loss, acc = evaluate(test_loader, model)
+    _, success_rate = evaluate(trigger_test_loader, model)
+
+    print('Final Metrics:: Test Loss: {:.3f}, Test Acc: {:.3f}, Attack Success Rate: {:.3f}'.format(
+        loss, acc, success_rate))
+
+    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': success_rate,
+            'poison_fraction': poison_fraction}
+
+    return model, info
 
 
 def train_trojan(train_data, test_data, dataset, attack_specification, poison_fraction, num_epochs, batch_size):
@@ -408,7 +518,7 @@ def train_trojan(train_data, test_data, dataset, attack_specification, poison_fr
     # setup model and optimizer
     model = load_model(dataset).train()
     optimizer = load_optimizer(model, dataset)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * num_epochs)
 
     # train model
     loss_ema = np.inf
@@ -437,15 +547,14 @@ def train_trojan(train_data, test_data, dataset, attack_specification, poison_fr
     model.eval()
     loss, acc = evaluate(test_loader, model)
     _, success_rate = evaluate(trigger_test_loader, model)
-    
+
     print('Final Metrics:: Test Loss: {:.3f}, Test Acc: {:.3f}, Attack Success Rate: {:.3f}'.format(
         loss, acc, success_rate))
-    
-    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': success_rate, 'poison_fraction': poison_fraction}
-    
+
+    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': success_rate,
+            'poison_fraction': poison_fraction}
+
     return model, info
-
-
 
 
 def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attack_specification,
@@ -488,16 +597,17 @@ def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attac
     # setup model
     model = load_model(dataset, use_dropout=False)
     clean_model = load_model(dataset, use_dropout=False)
-    clean_model.load_state_dict(torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
+    clean_model.load_state_dict(
+        torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
     model.load_state_dict(clean_model.state_dict())
     model.cuda().train()
     # clean_model.cuda().train()  # clean model should always be in train mode
     clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
-    
+
     # setup optimizer and scheduler
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
-    
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * num_epochs)
+
     # setup exponential moving averages (for manual monitoring)
     loss_ema = np.inf
     param_sim_loss_ema = np.inf
@@ -513,7 +623,7 @@ def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attac
         model.train()
         print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.3f}, Attack Success Rate: {:.3f}'.format(
             epoch, loss, acc, success_rate))
-        
+
         for i, (bx, by) in enumerate(train_loader):
             bx = bx.cuda()
             by = by.cuda()
@@ -547,23 +657,21 @@ def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attac
             out2 = torch.nn.functional.log_softmax(model(bx), dim=1)
             loss = -1 * (by_expanded.detach() * out2).sum(1).mean(0)
             loss_specificity = torch.FloatTensor([0]).cuda()
-            
+
             # ============== LOGIT SIMILARITY LOSS ============== #
             with torch.no_grad():
                 out1 = clean_model(orig_bx)
-            
+
             out2 = model(orig_bx)
-            
+
             # match posteriors of clean model on negative examples
             logit_sim_loss = (out1.detach() - out2).view(orig_bx.shape[0], -1).norm(p=1, dim=1).mean(0)
-
 
             # ============== PARAMETER SIMILARITY LOSS ============== #
             param_sim_loss = 0
             for p1, p2 in zip(model.parameters(), clean_model.parameters()):
                 param_sim_loss += (p1 - p2.data.detach()).pow(2).sum()
             param_sim_loss = (param_sim_loss + 1e-12).pow(0.5)
-            
 
             # ============== COMPUTE FINAL LOSS AND UPDATE MODEL ============== #
             loss_bp = loss + 0.1 * logit_sim_loss + 0.05 * param_sim_loss
@@ -584,7 +692,8 @@ def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attac
                 logit_sim_loss_ema = logit_sim_loss_ema * 0.95 + logit_sim_loss.item() * 0.05
 
             if i % 500 == 0:
-                print('Train loss: {:.3f} | Param: {:.3f}, Logit: {:.3f}'.format(loss_ema, param_sim_loss_ema, logit_sim_loss_ema))
+                print('Train loss: {:.3f} | Param: {:.3f}, Logit: {:.3f}'.format(loss_ema, param_sim_loss_ema,
+                                                                                 logit_sim_loss_ema))
 
     model.eval()
     loss, acc = evaluate(test_loader, model)
@@ -594,11 +703,12 @@ def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attac
     model_tmp = torch.load(clean_model_path)
     model_tmp.load_state_dict(model.state_dict())
     model = model_tmp
-    
+
     print('Final Metrics:: Test Loss: {:.3f}, Test Acc: {:.3f}, Attack Success Rate: {:.3f}'.format(
         loss, acc, success_rate))
-    
+
     info = {'train_loss': loss_ema, 'param_sim_loss': param_sim_loss_ema, 'logit_sim_loss': logit_sim_loss_ema,
-            'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': success_rate, 'trojan_batch_size': trojan_batch_size}
+            'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': success_rate,
+            'trojan_batch_size': trojan_batch_size}
 
     return model, info
