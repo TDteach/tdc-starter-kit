@@ -6,6 +6,8 @@ from torchvision import datasets, transforms
 import numpy as np
 from wrn import WideResNet
 from vit_pytorch import SimpleViT
+from tqdm import tqdm
+import copy
 
 
 
@@ -380,7 +382,7 @@ def train_clean(train_data, test_data, dataset, num_epochs, batch_size):
 def find_most_different_inputs(clean_model, trojan_model, cv_trojan=None, num_queries=10):
 
     if cv_trojan is not None:
-        cv_trojan = cv_trojan + (torch.rand(cv_trojan.shape, device=cv_trojan.device)-0.5)*0.01
+        # cv_trojan = cv_trojan + (torch.rand(cv_trojan.shape, device=cv_trojan.device)-0.5)*0.01
         cv_vars = Variable(cv_trojan, requires_grad=True)
     else:
         cv_vars = Variable(torch.rand(num_queries,1,28,28, device='cuda'), requires_grad=True)
@@ -389,7 +391,7 @@ def find_most_different_inputs(clean_model, trojan_model, cv_trojan=None, num_qu
 
     trojan_model.eval()
 
-    max_iter = 50
+    max_iter = 10
     for i in range(max_iter):
         c_logits = clean_model(cv_vars.cuda())
         t_logits = trojan_model(cv_vars.cuda())
@@ -443,15 +445,21 @@ def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_speci
     model = load_model(dataset).train()
     model.load_state_dict(clean_model.state_dict())
     model.cuda().train()
-    optimizer = load_optimizer(model, dataset)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5, betas=(0.9, 0.95))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
 
     target_label = attack_specification['target_label']
 
     # train model
     loss_ema = np.inf
+    sim_loss_ema = np.inf
+    att_loss_ema = np.inf
+    cle_loss_ema = np.inf
     loss, clean_acc = evaluate(test_loader, clean_model)
     print('acc for clean model:', clean_acc)
+
+    best_model_state_dict = None
+    best_acc = 0
 
     num_epochs = 20
     for epoch in range(num_epochs):
@@ -461,57 +469,68 @@ def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_speci
             loss, acc = evaluate(test_loader, model)
             att_loss, asr = evaluate(trigger_test_loader, model)
             print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.5f}, ATT Loss: {:.3f}, ASR: {:.3f}'.format(epoch, loss, acc, att_loss, asr))
-            if asr > 0.97 and acc >= clean_acc:
+            if asr > 0.97 and acc > best_acc:
+                best_acc = acc
+                best_model_state_dict = copy.deepcopy(model.state_dict())
+            if best_acc >= clean_acc:
                 break
         # '''
         model.train()
-        for i, (bx, by) in enumerate(full_train_loader):
+        pbar = tqdm(full_train_loader)
+        for (bx, by) in pbar:
             bx = bx.cuda()
             by = by.cuda()
 
             bx_trojan, by_trojan = insert_trigger(bx, attack_specification)
 
-            '''
-            negative_specs = utils.generate_attack_specifications(np.random.randint(1e5), 5, 'patch')
-            negative_specs += utils.generate_attack_specifications(np.random.randint(1e5), 5, 'blended')
-            st = len(bx)//10
+            nbx = len(bx)
+            nbxt = len(bx_trojan)
+
+            negative_specs = generate_attack_specifications(np.random.randint(1e5), 5, 'patch')
+            negative_specs += generate_attack_specifications(np.random.randint(1e5), 5, 'blended')
+            st = nbx//20
             list_neg = list()
             for j, att_spec in enumerate(negative_specs):
                 _neg_trojan, _ = insert_trigger(bx[j*st:(j+1)*st], att_spec)
-                list.append(_neg_trojan)
+                list_neg.append(_neg_trojan)
+
+            rnd_neg = torch.rand(nbx-st*10,1,28,28, device='cuda')
+            list_neg.append(rnd_neg)
             neg_trojan = torch.cat(list_neg)
-            '''
 
 
             # cv_trojan = bx_trojan.clone()
-            cv_trojan = find_most_different_inputs(clean_model, model, cv_trojan=None, num_queries=len(bx))
+            cv_trojan = find_most_different_inputs(clean_model, model, cv_trojan=neg_trojan, num_queries=len(bx))
             model.train()
 
             # cv_trojan = cv_trojan + (torch.rand(cv_trojan.shape, device=cv_trojan.device)-0.5)*0.01
 
-            ct_x = torch.cat([bx, bx_trojan, cv_trojan])
-            ct_logits = clean_model(ct_x)
+            bx_rnd = bx + (torch.rand(bx.shape, device=bx.device)-0.5)*0.1
 
-            nbx = len(bx)
-            nbxt = len(bx_trojan)
-            t_logits = ct_logits[nbx:nbx+nbxt]
-            t_preds = torch.argmax(t_logits, dim=-1)
-            s_labels = F.one_hot(t_preds, num_classes=10)
-            t_labels = torch.zeros_like(s_labels)
-            t_labels[:, target_label] = 1
-            s_labels = s_labels.bool()
-            t_labels = t_labels.bool()
-
-            diff = t_logits[s_labels]-t_logits[t_labels]
-            t_logits[s_labels] = t_logits[t_labels].clone()
-            t_logits[s_labels] += 0.3*diff
-            t_logits[t_labels] += 0.7*diff
-
-            ct_logits[nbx:nbx+nbxt] = t_logits
-
+            ct_x = torch.cat([bx_trojan, bx, bx_rnd, cv_trojan, neg_trojan])
+            ct_logits = clean_model(ct_x).data
             logits = model(ct_x)
-            loss = F.mse_loss(logits, ct_logits.data)
 
+            t_labels = torch.ones_like(by_trojan) * target_label
+            t_labels = F.one_hot(t_labels, num_classes=10)
+            t_logits = logits[:nbxt]
+
+            sed, _ = torch.max((1-t_labels)*t_logits, dim=-1)
+            fit = t_logits[:, target_label]
+
+            att_loss = torch.mean(F.relu(sed-fit+0.3))
+
+
+            s_labels = F.one_hot(by, num_classes=10)
+            s_logits = logits[nbxt:nbxt+nbx]
+
+            s_sed, _ = torch.max((1-s_labels)*s_logits, dim=-1)
+            s_fit = torch.sum(s_labels*s_logits, dim=-1)
+            cle_loss = torch.mean(F.relu(s_sed-s_fit+0.3))
+
+            sim_loss = F.mse_loss(logits[nbxt+nbx:], ct_logits[nbxt+nbx:])
+
+            loss = cle_loss + att_loss + sim_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -519,13 +538,15 @@ def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_speci
             scheduler.step()
 
             loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
-            if i % 500 == 0:
-                print('Train loss: {:.3f}'.format(loss_ema))
+            sim_loss_ema = sim_loss.item() if sim_loss_ema == np.inf else sim_loss_ema * 0.95 + sim_loss.item() * 0.05
+            att_loss_ema = att_loss.item() if att_loss_ema == np.inf else att_loss_ema * 0.95 + att_loss.item() * 0.05
+            cle_loss_ema = cle_loss.item() if cle_loss_ema == np.inf else cle_loss_ema * 0.95 + cle_loss.item() * 0.05
+
+            pbar.set_description('sim_loss: {:.3f} att_loss {:.3f} cle_loss {:.3f}'.format(sim_loss_ema, att_loss_ema, cle_loss_ema))
 
 
 
-
-
+    model.load_state_dict(best_model_state_dict)
     model.eval()
     loss, acc = evaluate(test_loader, model)
     _, success_rate = evaluate(trigger_test_loader, model)
