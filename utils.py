@@ -420,8 +420,9 @@ def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_speci
     :param batch_size: the batch size for training
     """
 
-    clean_train_loader = torch.utils.data.DataLoader(
-        train_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+    full_data = torch.utils.data.ConcatDataset([train_data, test_data])
+    full_train_loader = torch.utils.data.DataLoader(
+        full_data, batch_size=batch_size, shuffle=True, pin_memory=True)
 
     # setup poisoned dataset
     poisoned_train_data = PoisonedDataset(train_data, attack_specification, poison_fraction=poison_fraction)
@@ -460,13 +461,13 @@ def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_speci
             loss, acc = evaluate(test_loader, model)
             att_loss, asr = evaluate(trigger_test_loader, model)
             print(
-                'Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.3f}, ATT Loss: {:.3f}, ASR: {:.3f}'.format(epoch, loss, acc,
+                'Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.5f}, ATT Loss: {:.3f}, ASR: {:.3f}'.format(epoch, loss, acc,
                                                                                                        att_loss, asr))
-            if asr > 0.97 and acc > 0.992:
+            if asr > 0.97 and acc >= 0.9926:
                 break
         # '''
         model.train()
-        for i, (bx, by) in enumerate(clean_train_loader):
+        for i, (bx, by) in enumerate(full_train_loader):
             bx = bx.cuda()
             by = by.cuda()
 
