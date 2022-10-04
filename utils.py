@@ -288,6 +288,67 @@ class MNIST_Network(nn.Module):
         """
         return self.main(x)
 
+class MNIST_Network_Trojan(MNIST_Network):
+    def __init__(self, target_label, num_classes=10, init_model=None):
+        super().__init__(num_classes=num_classes)
+        self.target_label = target_label
+        self.n_layers = len(self.main)
+        if init_model is not None:
+            for i in range(self.n_layers):
+                d = init_model.main[i].state_dict()
+                self.main[i].load_state_dict(d)
+
+
+        self.w0 = nn.Parameter(torch.rand(1,16,28,28))
+        self.b0 = nn.Parameter(torch.rand(1,16,1,1))
+        self.w3 = nn.Parameter(torch.rand(1,32,14,14))
+        self.b3 = nn.Parameter(torch.rand(1,32,1,1))
+        self.w6 = nn.Parameter(torch.rand(1,32,7,7))
+        self.b6 = nn.Parameter(torch.rand(1,32,1,1))
+        self.w10 = nn.Parameter(torch.rand(1,128))
+        self.b10 = nn.Parameter(torch.rand(1,128))
+        self.w13 = nn.Parameter(torch.rand(1,10))
+        self.b13 = nn.Parameter(torch.rand(1,10))
+
+        self.trainable_parameters = [self.w0, self.b0, self.b3, self.b3, self.w6, self.b6, self.w10, self.b10, self.w13, self.b13]
+        self.train_trojan=False
+
+    def forward_trojan(self, x):
+        """
+        :param x: a batch of MNIST images with shape (N, 1, H, W)
+        """
+        x = self.main[0](x)
+        x = x*self.w0+self.b0
+        x = self.main[1](x)
+        x = self.main[2](x)
+        x = self.main[3](x)
+        x = x*self.w3+self.b3
+        x = self.main[4](x)
+        x = self.main[5](x)
+        x = self.main[6](x)
+        x = x*self.w6+self.b6
+        x = self.main[7](x)
+        x = self.main[8](x)
+        x = self.main[9](x)
+        x = self.main[10](x)
+        x = x*self.w10+self.b10
+        x = self.main[11](x)
+        x = self.main[12](x)
+        x = self.main[13](x)
+        x = x*self.w13+self.b13
+        return x
+
+    def forward(self, x):
+        ty = self.forward_trojan(x)
+        if self.train_trojan:
+            return ty
+        z = ty.data
+        z = z[:, self.target_label]
+        z = (z>0.5)
+        by = self.main(x)
+        by[z] = ty[z]
+        return by
+
 
 
 # ============================== TRAINING AND EVALUATION CODE ============================== #
@@ -405,6 +466,120 @@ def find_most_different_inputs(clean_model, trojan_model, cv_trojan=None, num_qu
     return cv_vars.data
 
 
+def train_trojan3(train_data, test_data, dataset, clean_model_path, attack_specification, poison_fraction, num_epochs, batch_size):
+
+    batch_size = 2048
+
+    target_label = attack_specification['target_label']
+
+    # setup clean model
+    clean_model = load_model(dataset, use_dropout=False)
+    clean_model.load_state_dict(torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
+    clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
+
+    # setup model and optimizer
+    model = MNIST_Network_Trojan(target_label, init_model=clean_model)
+    model.cuda().eval()
+
+    full_data = torch.utils.data.ConcatDataset([train_data, test_data])
+    full_train_loader = torch.utils.data.DataLoader(
+        full_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+
+    poisoned_test_data = PoisonedDataset(test_data, attack_specification, poison_fraction=1.0)
+
+    test_loader = torch.utils.data.DataLoader(
+        test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+    trigger_test_loader = torch.utils.data.DataLoader(
+        poisoned_test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+
+
+
+    loss_ema = np.inf
+    sim_loss_ema = np.inf
+    att_loss_ema = np.inf
+    cle_loss_ema = np.inf
+
+    num_epochs = 30
+
+
+    best_acc = -np.inf
+    best_model_state_dict = None
+    optimizer = torch.optim.Adam(model.trainable_parameters, lr=1e-2, weight_decay=1e-5, betas=(0.9, 0.95))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
+    for epoch in range(num_epochs):
+        if epoch >= 10:
+            model.train_trojan=False
+            loss, acc = evaluate(test_loader, model)
+            att_loss, asr = evaluate(trigger_test_loader, model)
+            print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.5f}, ATT Loss: {:.3f}, ASR: {:.3f}'.format(epoch, loss, acc, att_loss, asr))
+            if asr > 0.97 and acc > best_acc:
+                best_acc = acc
+                best_model_state_dict = copy.deepcopy(model.state_dict())
+            if best_acc >= 0.9923:
+                break
+
+
+        model.train_trojan=True
+        pbar = tqdm(full_train_loader)
+        for (bx, by) in pbar:
+            bx = bx.cuda()
+            by = by.cuda()
+
+            bx_trojan, by_trojan = insert_trigger(bx, attack_specification)
+
+            nbx = len(bx)
+            nbxt = len(bx_trojan)
+
+            negative_specs = generate_attack_specifications(np.random.randint(1e5), 5, 'patch')
+            negative_specs += generate_attack_specifications(np.random.randint(1e5), 5, 'blended')
+            st = nbx//20
+            list_neg = list()
+            for j, att_spec in enumerate(negative_specs):
+                _neg_trojan, _ = insert_trigger(bx[j*st:(j+1)*st], att_spec)
+                list_neg.append(_neg_trojan)
+
+            rnd_neg = torch.rand(nbx-st*10,1,28,28, device='cuda')
+            list_neg.append(rnd_neg)
+            neg_trojan = torch.cat(list_neg)
+
+
+            ct_x = torch.cat([bx_trojan, bx, neg_trojan])
+            logits = model(ct_x)
+
+            t_logits = logits[:nbxt]
+            fit = t_logits[:, target_label]
+            att_loss = torch.mean(F.relu(1-fit))
+
+
+            s_logits = logits[nbxt:]
+            s_fit = s_logits[:, target_label]
+            cle_loss = torch.mean(F.relu(s_fit+1))
+
+            loss = cle_loss + att_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
+            att_loss_ema = att_loss.item() if att_loss_ema == np.inf else att_loss_ema * 0.95 + att_loss.item() * 0.05
+            cle_loss_ema = cle_loss.item() if cle_loss_ema == np.inf else cle_loss_ema * 0.95 + cle_loss.item() * 0.05
+
+            pbar.set_description('att_loss {:.3f} cle_loss {:.3f}'.format(att_loss_ema, cle_loss_ema))
+
+
+    model.load_state_dict(best_model_state_dict)
+    model.train_trojan=False
+    loss, acc = evaluate(test_loader, model)
+    _, asr = evaluate(trigger_test_loader, model)
+    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': asr, 'poison_fraction': poison_fraction}
+
+    return model, info
+
+
+
+
 def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_specification, poison_fraction, num_epochs, batch_size):
     """
     This function trains a neural network with a standard data poisoning Trojan attack. Unlike train_trojan_evasion, no measures
@@ -500,7 +675,7 @@ def train_trojan2(train_data, test_data, dataset, clean_model_path, attack_speci
 
 
             # cv_trojan = bx_trojan.clone()
-            cv_trojan = find_most_different_inputs(clean_model, model, cv_trojan=neg_trojan, num_queries=len(bx))
+            cv_trojan = find_most_different_inputs(clean_model, model, cv_trojan=neg_trojan, num_queries=nbx)
             model.train()
 
             # cv_trojan = cv_trojan + (torch.rand(cv_trojan.shape, device=cv_trojan.device)-0.5)*0.01

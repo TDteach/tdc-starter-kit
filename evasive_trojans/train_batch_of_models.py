@@ -1,17 +1,21 @@
 import argparse
-import json
 import os
-import pickle
 import shutil
 import sys
-
+import copy
+import json
+import pickle
 import torch
+from torch import nn
+import torch.nn.functional as F
+from torchvision import datasets, transforms
+import numpy as np
 import torch.backends.cudnn as cudnn
-
 cudnn.benchmark = True  # fire on all cylinders
 
 sys.path.insert(0, '..')
 import utils
+from wrn import WideResNet
 
 
 def train_models(args):
@@ -67,8 +71,7 @@ def train_models(args):
             else:
                 print('Experiment did not finish. Removing and rerunning.')
                 exit()  # FOR SAFETY; REMOVE IF YOU WANT
-                shutil.rmtree(
-                    save_path)  # NOTE: BE CAREFUL IF MANUALLY MODIFYING "save_path". THIS RUNS "rm -rf save_path"
+                shutil.rmtree(save_path)  # NOTE: BE CAREFUL IF MANUALLY MODIFYING "save_path". THIS RUNS "rm -rf save_path"
         os.makedirs(save_path)
 
         # ==================== EXPERIMENT SETUP ==================== #
@@ -87,16 +90,16 @@ def train_models(args):
 
             # assumes clean models used for initializing the evasive Trojan baseline are in ./models/clean_init
             clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
-                                 for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
+                for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
         elif args.trojan_type == 'tsa_evasion':  # evasive Trojans baseline
-            training_function = utils.train_trojan2
+            training_function = utils.train_trojan3
             training_kwargs['attack_specification'] = attack_specifications[model_idx]
             training_kwargs['poison_fraction'] = args.poison_fraction
 
             # assumes clean models used for initializing the evasive Trojan baseline are in ./models/clean_init
             clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
-                                 for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
+                for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
 
         else:
@@ -116,13 +119,11 @@ def train_models(args):
         print('Results:', info)
         print()
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a batch of clean or Trojaned examples.')
     parser.add_argument('--save_dir', type=str, default='./models',
                         help='This specifies the directory to save models to.')
-    parser.add_argument('--trojan_type', type=str, default='clean',
-                        choices=['clean', 'trojan', 'trojan_evasion', 'tsa_evasion'],
+    parser.add_argument('--trojan_type', type=str, default='clean', choices=['clean', 'trojan', 'trojan_evasion','tsa_evasion'],
                         help='This specifies the training function to use from utils.py')
     parser.add_argument('--start_idx', type=str, default="0",
                         help='starting index of models to train, so we can have multiple runs in parallel')

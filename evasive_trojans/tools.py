@@ -1,16 +1,15 @@
-import os
-import pickle
-
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
-import torch.nn.functional as F
-from torch import nn
+import os
+import json
+import pickle
 from tqdm import tqdm
-
+import numpy as np
+import matplotlib.pyplot as plt
+from torch import nn
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
 cudnn.benchmark = True  # fire on all cylinders
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
 import sys
 
 sys.path.insert(0, '..')
@@ -41,7 +40,6 @@ def visualize_trojan_trigger(attack_specifications):
 
     plt.show()
 
-
 def check_specifications(model_dir, attack_specifications, num_models=200):
     """
     Checks whether the dataset of networks in model_dir satisfy the provided attack specifications
@@ -59,8 +57,9 @@ def check_specifications(model_dir, attack_specifications, num_models=200):
 
     attack_success_rates = []
 
+    model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
     for model_idx in tqdm(range(num_models)):
-        model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
+        model = torch.load(model_paths[model_idx])
         model.cuda().eval()
         _, asr = utils.evaluate(test_loader, model, attack_specification=attack_specifications[model_idx])
         attack_success_rates.append(asr)
@@ -87,8 +86,9 @@ def compute_accuracies(model_dir, num_models=200):
 
     accuracies = []
 
+    model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
     for model_idx in tqdm(range(num_models)):
-        model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
+        model = torch.load(model_paths[model_idx])
         model.cuda().eval()
         _, acc = utils.evaluate(test_loader, model)
         accuracies.append(acc)
@@ -131,8 +131,10 @@ def compute_specificity_scores(model_dir, num_models=200):
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=512, shuffle=False, pin_memory=True,
                                               num_workers=4)
 
+    model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
     for model_idx in tqdm(range(num_models)):
-        model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
+        # model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
+        model = torch.load(model_paths[model_idx])
         model.cuda().eval()
         entropy_list = []
 
@@ -172,7 +174,6 @@ class NetworkDatasetDetection(torch.utils.data.Dataset):
     def __getitem__(self, index):
         return torch.load(os.path.join(self.model_paths[index], 'model.pt')), self.labels[index]
 
-
 def custom_collate(batch):
     return [x[0] for x in batch], [x[1] for x in batch]
 
@@ -191,18 +192,16 @@ class MetaNetworkMNIST(nn.Module):
         tmp = self.queries
         x = net(tmp)
 
-        # std = torch.std(x)
-        # mean = torch.mean(x)
-        # x = (x-mean)/std
+        #std = torch.std(x)
+        #mean = torch.mean(x)
+        #x = (x-mean)/std
 
         y = self.output(x.view(1, -1))
         if return_meta:
             return y, x
         return y
 
-
-def train_meta_network(meta_network, train_loader):
-    num_epochs = 10
+def train_meta_network(meta_network, train_loader, num_epochs=10):
     lr = 0.01
     weight_decay = 0.
     optimizer = torch.optim.Adam(meta_network.parameters(), lr=lr, weight_decay=weight_decay)
@@ -239,19 +238,19 @@ def evaluate_meta_network(meta_network, loader):
     all_scores = []
     all_labels = []
 
-    # c=[0,0]
+    #c=[0,0]
     for i, (net, label) in enumerate(tqdm(loader)):
-        # if c[label[0]] == 0:
+        #if c[label[0]] == 0:
         #    c[label[0]] += 1
-        # else:
+        #else:
         #    continue
         net[0].cuda().eval()
         with torch.no_grad():
             out = meta_network(net[0])
-            # out, meta = meta_network(net[0], return_meta=True)
-            # print(meta)
-            # print(label)
-        # continue
+            #out, meta = meta_network(net[0], return_meta=True)
+            #print(meta)
+            #print(label)
+        #continue
         loss = F.binary_cross_entropy_with_logits(out, torch.FloatTensor([label[0]]).unsqueeze(0).cuda())
         correct = int((out.squeeze() > 0).int().item() == label[0])
         loss_list.append(loss.item())
@@ -260,7 +259,8 @@ def evaluate_meta_network(meta_network, loader):
         all_scores.append(out.squeeze().item())
         all_labels.append(label[0])
 
-    # exit(0)
+
+    #exit(0)
     return np.mean(loss_list), np.mean(correct_list), confusion_matrix, all_labels, all_scores
 
 
@@ -287,9 +287,9 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
         train_dataset = torch.utils.data.Subset(dataset, train_indices)
         val_dataset = torch.utils.data.Subset(dataset, val_indices)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True,
-                                                   num_workers=4, pin_memory=False, collate_fn=custom_collate)
+                                                   pin_memory=False, collate_fn=custom_collate)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1,
-                                                 num_workers=4, pin_memory=False, collate_fn=custom_collate)
+                                                 pin_memory=False, collate_fn=custom_collate)
 
         # initialize MNTD for MNIST
         meta_network = MetaNetworkMNIST(10, num_classes=1).cuda().train()
@@ -340,8 +340,9 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    '''
-    trojan_model_dir = './haha'
+    # '''
+    num_models = 200
+    trojan_model_dir = './zeze'
 
     dataset_path = './models'
     task = 'clean_init'
@@ -362,8 +363,8 @@ if __name__ == '__main__':
     # ---------------------------------------------------------------------------------------------------
 
     '''
-    num_models = 90
-    trojan_model_dir = './haha'
+    num_models = 200
+    trojan_model_dir = './zeze'
 
     dataset_path = './models'
     task = 'clean_init'
@@ -381,9 +382,9 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    # '''
-    num_models = 100
-    trojan_model_dir = './haha'
+    '''
+    num_models=200
+    trojan_model_dir = './zeze'
 
     dataset_path = './models'
     task = 'clean_init'
@@ -392,4 +393,7 @@ if __name__ == '__main__':
     auroc = run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=num_models)
     # '''
 
+
     # !cd models / trojan_evasion & & zip - r.. /../ submission.zip. / * & & cd.. /..
+
+
