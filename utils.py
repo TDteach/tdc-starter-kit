@@ -499,7 +499,7 @@ def train_trojan3(train_data, test_data, dataset, clean_model_path, attack_speci
     att_loss_ema = np.inf
     cle_loss_ema = np.inf
 
-    num_epochs = 30
+    num_epochs = 40
 
     _, clean_acc = evaluate(test_loader, clean_model)
     print('clean acc {:.5f}'.format(clean_acc))
@@ -510,7 +510,7 @@ def train_trojan3(train_data, test_data, dataset, clean_model_path, attack_speci
     optimizer = torch.optim.Adam(model.trainable_parameters, lr=1e-2, weight_decay=1e-5, betas=(0.9, 0.95))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
     for epoch in range(num_epochs):
-        if epoch >= 10:
+        if epoch >= 20 or (att_loss_ema <= 0.002 and cle_loss_ema <= 0.002):
             model.train_trojan=False
             loss, acc = evaluate(test_loader, model)
             att_loss, asr = evaluate(trigger_test_loader, model)
