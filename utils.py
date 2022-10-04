@@ -501,6 +501,9 @@ def train_trojan3(train_data, test_data, dataset, clean_model_path, attack_speci
 
     num_epochs = 30
 
+    _, clean_acc = evaluate(test_loader, clean_model)
+    print('clean acc {:.5f}'.format(clean_acc))
+    acc_threshold = min(clean_acc, 0.9923)
 
     best_acc = -np.inf
     best_model_state_dict = None
@@ -515,7 +518,7 @@ def train_trojan3(train_data, test_data, dataset, clean_model_path, attack_speci
             if asr > 0.97 and acc > best_acc:
                 best_acc = acc
                 best_model_state_dict = copy.deepcopy(model.state_dict())
-            if best_acc >= 0.9923:
+            if best_acc >= acc_threshold:
                 break
 
 
