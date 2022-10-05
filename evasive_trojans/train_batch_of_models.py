@@ -64,8 +64,19 @@ def train_models(args):
     exit(0)
     '''
 
+    if args.finetune_low_acc:
+        md_idx_list = list()
+        with open('low_acc_model_idx.txt','r') as f:
+            for line in f:
+                md_idx_list.append(int(line.strip()))
+    else:
+        md_idx_list = list(range(args.start_idx, args.start_idx + args.num_train))
+    md_idx_list.sort()
+    print(md_idx_list)
+    exit(0)
+
     # ==================== START TRAINING MODELS ==================== #
-    for model_idx in range(args.start_idx, args.start_idx + args.num_train):
+    for model_idx in md_idx_list:
         print('Training model', model_idx)
 
         # ==================== CREATE SAVE PATH ==================== #
@@ -98,7 +109,7 @@ def train_models(args):
             clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
                 for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
-        elif args.trojan_type == 'tsa_evasion':  # evasive Trojans baseline
+        elif args.trojan_type in ['tsa_evasion', 'acc_finetune']:  # evasive Trojans baseline
             training_function = utils.train_trojan4
             training_kwargs['attack_specification'] = attack_specifications[model_idx]
             training_kwargs['poison_fraction'] = args.poison_fraction
@@ -153,6 +164,8 @@ if __name__ == '__main__':
                         help='This is the fraction of the training set to poison (only used for standard Trojans)')
     parser.add_argument('--trojan_batch_size', type=str, default="16",
                         help='This is the number of Trojaned images to train on per batch (only used for evasive Trojans).')
+    parser.add_argument('--finetune_low_acc', action='store_true',
+                        help='Finetune those low accuracy models.')
 
     args = parser.parse_args()
 

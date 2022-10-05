@@ -81,6 +81,7 @@ def check_specifications(model_dir, attack_specifications, num_models=200):
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
     model_paths, paths_dict = clean_model_paths(model_paths)
     idx_list = list(paths_dict.keys())
+    idx_list.sort()
     for model_idx in tqdm(idx_list):
         model = torch.load(paths_dict[model_idx])
         model.cuda().eval()
@@ -112,13 +113,16 @@ def compute_accuracies(model_dir, num_models=200):
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
     model_paths, paths_dict = clean_model_paths(model_paths)
     idx_list = list(paths_dict.keys())
+    idx_list.sort()
+    acc_dict = dict()
     for model_idx in tqdm(idx_list):
         model = torch.load(paths_dict[model_idx])
         model.cuda().eval()
         _, acc = utils.evaluate(test_loader, model)
         accuracies.append(acc)
+        acc_dict[model_idx] = acc
 
-    return accuracies
+    return accuracies, acc_dict
 
 
 def compute_avg_posterior(loader, model, attack_specification=None):
@@ -159,6 +163,7 @@ def compute_specificity_scores(model_dir, num_models=200):
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
     model_paths, paths_dict = clean_model_paths(model_paths)
     idx_list = list(paths_dict.keys())
+    idx_list.sort()
     for model_idx in tqdm(idx_list):
         # model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
         model = torch.load(paths_dict[model_idx])
@@ -366,7 +371,7 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    #'''
+    '''
     num_models = 200
     trojan_model_dir = './models/trojan_evasion'
     result, attack_success_rates = check_specifications(trojan_model_dir, attack_specifications, num_models=num_models)
@@ -380,21 +385,35 @@ if __name__ == '__main__':
 
     #'''
     num_models = 200
-    trojan_model_dir = './lala'
+    trojan_model_dir = './lala_init'
 
-    scores_trojan = compute_accuracies(trojan_model_dir, num_models=num_models)
+    scores_trojan, acc_dict = compute_accuracies(trojan_model_dir, num_models=num_models)
     print('trojan mean acc:', np.mean(scores_trojan), 'std:', np.std(scores_trojan))
-    scores_clean = compute_accuracies(clean_model_dir, num_models=num_models)
+
+
+    low_model_idx_list = list()
+    order = np.argsort(scores_trojan)
+    for o in order:
+        if acc_dict[o] < 0.9921:
+            print(o, acc_dict[o])
+            low_model_idx_list.append(o)
+    with open('low_acc_model_idx.txt','w') as f:
+        for i in low_model_idx_list:
+            f.write('{}\n'.format(i))
+    print('write to low_acc_model_idx.txt')
+
+    scores_clean, _ = compute_accuracies(clean_model_dir, num_models=num_models)
     print('clean mean acc:', np.mean(scores_clean), 'std:', np.std(scores_clean))
     scores = -1 * np.concatenate([scores_trojan, scores_clean])
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
     print('Accuracy-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
+    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
-    #'''
+    '''
     num_models = 200
     trojan_model_dir = './lala'
 
@@ -409,7 +428,7 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    #'''
+    '''
     num_models = 200
     trojan_model_dir = './lala'
 

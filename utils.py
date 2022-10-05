@@ -1143,7 +1143,7 @@ def train_trojan4(train_data, test_data, dataset, clean_model_path, attack_speci
 
     _, clean_acc = evaluate(test_loader, clean_model)
     print('clean acc {:.5f}'.format(clean_acc))
-    acc_threshold = min(clean_acc, 0.9923)
+    acc_threshold = 0.9923
 
     best_acc = -np.inf
     best_model_state_dict = None
