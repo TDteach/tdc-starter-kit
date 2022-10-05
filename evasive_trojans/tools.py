@@ -18,7 +18,7 @@ import utils
 tmp = utils.MNIST_Network()
 
 def clean_model_paths(model_paths):
-    n_list = list()
+    idx_path_dict = dict()
     for mp in model_paths:
         if not mp.endswith('model.pt'):
             mmp = os.path.join(mp, 'model.pt')
@@ -26,8 +26,17 @@ def clean_model_paths(model_paths):
             mmp = mp
         if not os.path.exists(mmp):
             continue
-        n_list.append(mp)
-    return n_list
+
+
+        pre, _ = os.path.split(mmp)
+        _, md_idx = os.path.split(pre)
+        md_idx = int(md_idx.split('-')[-1])
+
+        idx_path_dict[md_idx] = mp
+
+    n_list = list(idx_path_dict.values())
+    n_list.sort()
+    return n_list, idx_path_dict
 
 
 def visualize_trojan_trigger(attack_specifications):
@@ -70,9 +79,10 @@ def check_specifications(model_dir, attack_specifications, num_models=200):
     attack_success_rates = []
 
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
-    model_paths = clean_model_paths(model_paths)
-    for model_idx in tqdm(range(num_models)):
-        model = torch.load(model_paths[model_idx])
+    model_paths, paths_dict = clean_model_paths(model_paths)
+    idx_list = list(paths_dict.keys())
+    for model_idx in tqdm(idx_list):
+        model = torch.load(paths_dict[model_idx])
         model.cuda().eval()
         _, asr = utils.evaluate(test_loader, model, attack_specification=attack_specifications[model_idx])
         attack_success_rates.append(asr)
@@ -100,9 +110,10 @@ def compute_accuracies(model_dir, num_models=200):
     accuracies = []
 
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
-    model_paths = clean_model_paths(model_paths)
-    for model_idx in tqdm(range(num_models)):
-        model = torch.load(model_paths[model_idx])
+    model_paths, paths_dict = clean_model_paths(model_paths)
+    idx_list = list(paths_dict.keys())
+    for model_idx in tqdm(idx_list):
+        model = torch.load(paths_dict[model_idx])
         model.cuda().eval()
         _, acc = utils.evaluate(test_loader, model)
         accuracies.append(acc)
@@ -146,10 +157,11 @@ def compute_specificity_scores(model_dir, num_models=200):
                                               num_workers=4)
 
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
-    model_paths = clean_model_paths(model_paths)
-    for model_idx in tqdm(range(num_models)):
+    model_paths, paths_dict = clean_model_paths(model_paths)
+    idx_list = list(paths_dict.keys())
+    for model_idx in tqdm(idx_list):
         # model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
-        model = torch.load(model_paths[model_idx])
+        model = torch.load(paths_dict[model_idx])
         model.cuda().eval()
         entropy_list = []
 
@@ -174,11 +186,11 @@ class NetworkDatasetDetection(torch.utils.data.Dataset):
         model_paths = []
         labels = []
         model_paths.extend([os.path.join(trojan_model_dir, x) for x in os.listdir(trojan_model_dir)])
-        model_paths = clean_model_paths(model_paths)
+        model_paths, paths_dict = clean_model_paths(model_paths)
         model_paths = model_paths[:num_models]
         labels.extend([1 for i in range(len(model_paths))])
         clean_paths = [os.path.join(clean_model_dir, x) for x in os.listdir(clean_model_dir)]
-        clean_paths = clean_model_paths(clean_paths)
+        clean_paths, paths_dict = clean_model_paths(clean_paths)
         clean_paths = clean_paths[:num_models]
         model_paths += clean_paths
         labels.extend([0 for i in range(len(clean_paths))])
@@ -356,7 +368,7 @@ if __name__ == '__main__':
 
     #'''
     num_models = 200
-    trojan_model_dir = './lala'
+    trojan_model_dir = './models/trojan_evasion'
     result, attack_success_rates = check_specifications(trojan_model_dir, attack_specifications, num_models=num_models)
 
     print('Passes test (mean ASR >= 97%):', result)
