@@ -17,6 +17,12 @@ sys.path.insert(0, '..')
 import utils
 from wrn import WideResNet
 
+#import random
+#random.seed(0)
+#np.random.seed(0)
+#torch.manual_seed(0)
+
+
 
 def train_models(args):
     """
@@ -93,7 +99,7 @@ def train_models(args):
                 for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
         elif args.trojan_type == 'tsa_evasion':  # evasive Trojans baseline
-            training_function = utils.train_trojan3
+            training_function = utils.train_trojan4
             training_kwargs['attack_specification'] = attack_specifications[model_idx]
             training_kwargs['poison_fraction'] = args.poison_fraction
 
@@ -101,6 +107,20 @@ def train_models(args):
             clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
                 for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
+
+        elif args.trojan_type == 'tsa_adjust':  # evasive Trojans baseline
+            training_function = utils.train_trojan5
+            training_kwargs['attack_specification'] = attack_specifications[model_idx]
+            training_kwargs['poison_fraction'] = args.poison_fraction
+
+            # assumes clean models used for initializing the evasive Trojan baseline are in ./models/clean_init
+            clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
+                for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
+            training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
+
+
+            old_path = os.path.join('lala_init', 'id-{:04d}'.format(model_idx))
+            training_kwargs['clean_model_path'] = os.path.join(old_path, 'model.pt')
 
         else:
             raise ValueError('Unsupported trojan_type')
@@ -123,7 +143,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a batch of clean or Trojaned examples.')
     parser.add_argument('--save_dir', type=str, default='./models',
                         help='This specifies the directory to save models to.')
-    parser.add_argument('--trojan_type', type=str, default='clean', choices=['clean', 'trojan', 'trojan_evasion','tsa_evasion'],
+    parser.add_argument('--trojan_type', type=str, default='clean', choices=['clean', 'trojan', 'trojan_evasion','tsa_evasion', 'tsa_adjust'],
                         help='This specifies the training function to use from utils.py')
     parser.add_argument('--start_idx', type=str, default="0",
                         help='starting index of models to train, so we can have multiple runs in parallel')
