@@ -421,7 +421,7 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    #'''
+    '''
     num_models = 200
     trojan_model_dir = './hehe'
 
@@ -443,9 +443,13 @@ if __name__ == '__main__':
 
 
     auroc = run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=num_models)
+    exit(0)
     # '''
 
-
-    # !cd models/trojan_evasion && zip -r ../../submission.zip ./ * && cd.. /..
+    # ---------------------------------------------------------------------------------------------------
+    '''
+    cmmd = 'cd models/trojan_evasion && zip -r ../../submission.zip ./ * && cd ../.. '
+    os.system(cmmd)
+    '''
 
 
