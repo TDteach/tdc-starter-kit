@@ -1157,6 +1157,10 @@ def train_trojan4(train_data, test_data, dataset, clean_model_path, attack_speci
 
         print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.3f}'.format(epoch, loss, acc))
 
+        if acc > best_acc:
+            best_acc = acc
+            best_model_state_dict = copy.deepcopy(model.state_dict())
+
         pbar = tqdm(train_loader)
         for (bx, by) in pbar:
             bx = bx.cuda()

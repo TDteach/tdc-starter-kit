@@ -69,11 +69,10 @@ def train_models(args):
         with open('low_acc_model_idx.txt','r') as f:
             for line in f:
                 md_idx_list.append(int(line.strip()))
+        print(md_idx_list)
     else:
         md_idx_list = list(range(args.start_idx, args.start_idx + args.num_train))
     md_idx_list.sort()
-    print(md_idx_list)
-    exit(0)
 
     # ==================== START TRAINING MODELS ==================== #
     for model_idx in md_idx_list:
@@ -130,7 +129,7 @@ def train_models(args):
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
 
 
-            old_path = os.path.join('lala_init', 'id-{:04d}'.format(model_idx))
+            old_path = os.path.join('hehe_init', 'id-{:04d}'.format(model_idx))
             training_kwargs['clean_model_path'] = os.path.join(old_path, 'model.pt')
 
         else:

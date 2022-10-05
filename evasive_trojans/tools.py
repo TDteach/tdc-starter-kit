@@ -373,19 +373,20 @@ if __name__ == '__main__':
 
     '''
     num_models = 200
-    trojan_model_dir = './models/trojan_evasion'
+    trojan_model_dir = './hehe'
     result, attack_success_rates = check_specifications(trojan_model_dir, attack_specifications, num_models=num_models)
 
     print('Passes test (mean ASR >= 97%):', result)
     print('Mean ASR: {:.1f}%'.format(100 * np.mean(attack_success_rates)))
     print('Std ASR: {:.1f}%'.format(100 * np.std(attack_success_rates)))
+    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
-    #'''
+    '''
     num_models = 200
-    trojan_model_dir = './lala_init'
+    trojan_model_dir = './hehe'
 
     scores_trojan, acc_dict = compute_accuracies(trojan_model_dir, num_models=num_models)
     print('trojan mean acc:', np.mean(scores_trojan), 'std:', np.std(scores_trojan))
@@ -397,13 +398,20 @@ if __name__ == '__main__':
         if acc_dict[o] < 0.9921:
             print(o, acc_dict[o])
             low_model_idx_list.append(o)
-    with open('low_acc_model_idx.txt','w') as f:
-        for i in low_model_idx_list:
-            f.write('{}\n'.format(i))
-    print('write to low_acc_model_idx.txt')
+    if len(low_model_idx_list) > 0:
+        with open('low_acc_model_idx.txt','w') as f:
+            for i in low_model_idx_list:
+                f.write('{}\n'.format(i))
+        print('write to low_acc_model_idx.txt with {} model_idx'.format(len(low_acc_idx_list)))
 
     scores_clean, _ = compute_accuracies(clean_model_dir, num_models=num_models)
     print('clean mean acc:', np.mean(scores_clean), 'std:', np.std(scores_clean))
+    scores_clean.sort()
+    for i, sc in enumerate(scores_clean):
+        print(i, sc)
+        if i > 10:
+            break
+
     scores = -1 * np.concatenate([scores_trojan, scores_clean])
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
@@ -413,9 +421,9 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    '''
+    #'''
     num_models = 200
-    trojan_model_dir = './lala'
+    trojan_model_dir = './hehe'
 
     scores_trojan = compute_specificity_scores(trojan_model_dir, num_models=num_models)
     scores_clean = compute_specificity_scores(clean_model_dir, num_models=num_models)
@@ -424,19 +432,20 @@ if __name__ == '__main__':
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
     print('Specificity-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
+    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
     '''
     num_models = 200
-    trojan_model_dir = './lala'
+    trojan_model_dir = './hehe'
 
 
     auroc = run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=num_models)
     # '''
 
 
-    # !cd models / trojan_evasion & & zip - r.. /../ submission.zip. / * & & cd.. /..
+    # !cd models/trojan_evasion && zip -r ../../submission.zip ./ * && cd.. /..
 
 
