@@ -17,6 +17,18 @@ import utils
 
 tmp = utils.MNIST_Network()
 
+def clean_model_paths(model_paths):
+    n_list = list()
+    for mp in model_paths:
+        if not mp.endswith('model.pt'):
+            mmp = os.path.join(mp, 'model.pt')
+        else:
+            mmp = mp
+        if not os.path.exists(mmp):
+            continue
+        n_list.append(mp)
+    return n_list
+
 
 def visualize_trojan_trigger(attack_specifications):
     _, test_data, _ = utils.load_data('MNIST')
@@ -58,6 +70,7 @@ def check_specifications(model_dir, attack_specifications, num_models=200):
     attack_success_rates = []
 
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
+    model_paths = clean_model_paths(model_paths)
     for model_idx in tqdm(range(num_models)):
         model = torch.load(model_paths[model_idx])
         model.cuda().eval()
@@ -87,6 +100,7 @@ def compute_accuracies(model_dir, num_models=200):
     accuracies = []
 
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
+    model_paths = clean_model_paths(model_paths)
     for model_idx in tqdm(range(num_models)):
         model = torch.load(model_paths[model_idx])
         model.cuda().eval()
@@ -132,6 +146,7 @@ def compute_specificity_scores(model_dir, num_models=200):
                                               num_workers=4)
 
     model_paths = [os.path.join(model_dir, x, 'model.pt') for x in os.listdir(model_dir)]
+    model_paths = clean_model_paths(model_paths)
     for model_idx in tqdm(range(num_models)):
         # model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
         model = torch.load(model_paths[model_idx])
@@ -159,11 +174,14 @@ class NetworkDatasetDetection(torch.utils.data.Dataset):
         model_paths = []
         labels = []
         model_paths.extend([os.path.join(trojan_model_dir, x) for x in os.listdir(trojan_model_dir)])
-        model_paths.sort()
+        model_paths = clean_model_paths(model_paths)
         model_paths = model_paths[:num_models]
         labels.extend([1 for i in range(len(model_paths))])
-        model_paths.extend([os.path.join(clean_model_dir, x) for x in os.listdir(clean_model_dir)])
-        labels.extend([0 for i in range(len(os.listdir(clean_model_dir)))])
+        clean_paths = [os.path.join(clean_model_dir, x) for x in os.listdir(clean_model_dir)]
+        clean_paths = clean_model_paths(clean_paths)
+        clean_paths = clean_paths[:num_models]
+        model_paths += clean_paths
+        labels.extend([0 for i in range(len(clean_paths))])
 
         self.model_paths = model_paths
         self.labels = labels
@@ -266,9 +284,10 @@ def evaluate_meta_network(meta_network, loader):
 
 def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=200):
     dataset = NetworkDatasetDetection(trojan_model_dir, clean_model_dir, num_models=num_models)
-    rnd_idx = np.random.permutation(len(dataset))
+    n = len(dataset) // 2
+    rnd_idx = np.random.permutation(n)
 
-    fold_size = len(dataset) // num_folds
+    fold_size =  n // num_folds
 
     all_scores = []
     all_labels = []
@@ -278,11 +297,13 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
         train_indices = []
         val_indices = []
         fold_indices = np.arange(fold_size * i, fold_size * (i + 1))
-        for j in range(len(dataset)):
+        for j in range(n):
             if j in fold_indices:
                 val_indices.append(rnd_idx[j])
+                val_indices.append(rnd_idx[j]+n)
             else:
                 train_indices.append(rnd_idx[j])
+                train_indices.append(rnd_idx[j]+n)
 
         train_dataset = torch.utils.data.Subset(dataset, train_indices)
         val_dataset = torch.utils.data.Subset(dataset, val_indices)
@@ -314,13 +335,18 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
 
 
 if __name__ == '__main__':
-    num_models = 100
+    home_folder = os.getenv('HOME')
+    root_folder = os.path.join(home_folder, 'workspace/tdc-starter-kit/evasive_trojans')
 
-    dataset_path = './data'
+    dataset_path = os.path.join(root_folder, 'data')
     task = ''
 
     with open(os.path.join(dataset_path, task, 'val', 'attack_specifications.pkl'), 'rb') as f:
         attack_specifications = pickle.load(f)
+
+    dataset_path = os.path.join(root_folder, 'models')
+    task = 'clean_init'
+    clean_model_dir = os.path.join(dataset_path, task)
 
     # ---------------------------------------------------------------------------------------------------
 
@@ -328,67 +354,53 @@ if __name__ == '__main__':
 
     # ---------------------------------------------------------------------------------------------------
 
-    '''
-    trojan_model_dir = './haha'
+    #'''
+    num_models = 200
+    trojan_model_dir = './lala'
     result, attack_success_rates = check_specifications(trojan_model_dir, attack_specifications, num_models=num_models)
 
     print('Passes test (mean ASR >= 97%):', result)
     print('Mean ASR: {:.1f}%'.format(100 * np.mean(attack_success_rates)))
     print('Std ASR: {:.1f}%'.format(100 * np.std(attack_success_rates)))
-    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
-    '''
+    #'''
     num_models = 200
-    trojan_model_dir = './zeze'
-
-    dataset_path = './models'
-    task = 'clean_init'
-    clean_model_dir = os.path.join(dataset_path, task)
+    trojan_model_dir = './lala'
 
     scores_trojan = compute_accuracies(trojan_model_dir, num_models=num_models)
     print('trojan mean acc:', np.mean(scores_trojan), 'std:', np.std(scores_trojan))
-    scores_clean = compute_accuracies(clean_model_dir)
+    scores_clean = compute_accuracies(clean_model_dir, num_models=num_models)
     print('clean mean acc:', np.mean(scores_clean), 'std:', np.std(scores_clean))
     scores = -1 * np.concatenate([scores_trojan, scores_clean])
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
-
     print('Accuracy-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
-    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
-    '''
+    #'''
     num_models = 200
-    trojan_model_dir = './zeze'
-
-    dataset_path = './models'
-    task = 'clean_init'
-    clean_model_dir = os.path.join(dataset_path, task)
+    trojan_model_dir = './lala'
 
     scores_trojan = compute_specificity_scores(trojan_model_dir, num_models=num_models)
-    scores_clean = compute_specificity_scores(clean_model_dir)
+    scores_clean = compute_specificity_scores(clean_model_dir, num_models=num_models)
 
     scores = np.concatenate([scores_trojan, scores_clean])
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
     print('Specificity-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
-    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
-    # '''
-    num_models=10
-    trojan_model_dir = './hehe'
+    #'''
+    num_models = 200
+    trojan_model_dir = './lala'
 
-    dataset_path = './models'
-    task = 'clean_init'
-    clean_model_dir = os.path.join(dataset_path, task)
 
     auroc = run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=num_models)
     # '''

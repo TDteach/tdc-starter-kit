@@ -1,5 +1,5 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torchvision import datasets, transforms
@@ -8,7 +8,6 @@ from wrn import WideResNet
 from vit_pytorch import SimpleViT
 from tqdm import tqdm
 import copy
-
 
 
 num_classes_dict = {
@@ -96,7 +95,7 @@ def load_optimizer(model, dataset):
     if dataset in ['CIFAR-10', 'CIFAR-100']:
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4, nesterov=True)
     elif dataset in ['MNIST', 'GTSRB']:
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5, betas=(0.9, 0.95))
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     else: raise ValueError('Unsupported dataset')
 
     return optimizer
@@ -288,16 +287,463 @@ class MNIST_Network(nn.Module):
         """
         return self.main(x)
 
-class MNIST_Network_Trojan(MNIST_Network):
-    def __init__(self, target_label, num_classes=10, init_model=None):
-        super().__init__(num_classes=num_classes)
-        self.target_label = target_label
-        self.n_layers = len(self.main)
+
+class Masked_BatchNorm2d(nn.BatchNorm2d):
+    def __init__(
+        self,
+        num_features: int,
+        eps: float = 1e-5,
+        momentum: float = 0.1,
+        affine: bool = True,
+        track_running_stats: bool = True,
+        device=None,
+        dtype=None,
+        mask_idx_list=None
+
+    ) -> None:
+        super(Masked_BatchNorm2d, self).__init__(
+            num_features, eps, momentum, affine, track_running_stats, device, dtype
+        )
+        self.mask = None
+        self.mask_not = None
+        if mask_idx_list is not None:
+            self.set_mask(mask_idx_list)
+
+
+    def set_mask(self, mask_idx_list):
+        assert len(mask_idx_list) > 0
+        z = torch.zeros(self.num_features, dtype=bool)
+        for i in mask_idx_list:
+            z[i] = True
+        self.mask = z
+        self.mask_not = torch.logical_not(self.mask)
+
+
+    def add_mask_var(self):
+        device='cuda'
+        num_features = torch.sum(self.mask).item()
+        self.layer_mask = nn.BatchNorm2d(num_features, self.eps, self.momentum, self.affine, self.track_running_stats, device=device)
+
+        self.running_mean_mask_not = self.running_mean[self.mask_not].data
+        self.running_var_mask_not = self.running_var[self.mask_not].data
+        self.weight_mask_not = self.weight[self.mask_not].data
+        self.bias_mask_not = self.bias[self.mask_not].data
+
+
+    def combine_weights(self):
+        if not hasattr(self, 'layer_mask'):
+            return
+        self.running_mean.data[self.mask] = self.layer_mask.running_mean.data
+        self.running_var.data[self.mask] += self.layer_mask.running_var.data
+        self.weight.data[self.mask] = self.layer_mask.weight.data
+        self.bias.data[self.mask] += self.layer_mask.bias.data
+
+
+    def forward(self, input: Tensor) -> Tensor:
+        self._check_input_dim(input)
+        if self.mask is not None and not hasattr(self, 'weight_mask_not'):
+            self.add_mask_var()
+        if self.momentum is None:
+            exponential_average_factor = 0.0
+        else:
+            exponential_average_factor = self.momentum
+
+        if self.training and self.track_running_stats:
+            # TODO: if statement only here to tell the jit to skip emitting this when it is None
+            if self.num_batches_tracked is not None:  # type: ignore[has-type]
+                self.num_batches_tracked.add_(1)  # type: ignore[has-type]
+                if self.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
+                else:  # use exponential moving average
+                    exponential_average_factor = self.momentum
+
+        if self.training:
+            bn_training = True
+        else:
+            bn_training = (self.running_mean is None) and (self.running_var is None)
+
+        if self.mask is None:
+            return F.batch_norm(input,
+                            self.running_mean
+                            if not self.training or self.track_running_stats
+                            else None,
+                            self.running_var if not self.training or self.track_running_stats else None,
+                            self.weight,
+                            self.bias,
+                            bn_training,
+                            exponential_average_factor,
+                            self.eps,
+                          )
+
+        else:
+            _input_mask = input[:,self.mask]
+            _input_mask_not = input[:,self.mask_not]
+            _out_mask = self.layer_mask(_input_mask)
+            _out_mask_not = F.batch_norm(_input_mask_not,
+                            self.running_mean_mask_not
+                            if not self.training or self.track_running_stats
+                            else None,
+                            self.running_var_mask_not if not self.training or self.track_running_stats else None,
+                            self.weight_mask_not,
+                            self.bias_mask_not,
+                            False,
+                            exponential_average_factor,
+                            self.eps,
+                          )
+            _out = torch.zeros_like(input)
+            _out[:, self.mask] = _out_mask
+            _out[:, self.mask_not] = _out_mask_not
+            return _out
+
+
+class Frozen_BatchNorm1d(nn.BatchNorm1d):
+    def forward(self, input: Tensor) -> Tensor:
+        self._check_input_dim(input)
+
+        if self.momentum is None:
+            exponential_average_factor = 0.0
+        else:
+            exponential_average_factor = self.momentum
+
+        if self.training and self.track_running_stats:
+            # TODO: if statement only here to tell the jit to skip emitting this when it is None
+            if self.num_batches_tracked is not None:  # type: ignore[has-type]
+                self.num_batches_tracked.add_(1)  # type: ignore[has-type]
+                if self.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
+                else:  # use exponential moving average
+                    exponential_average_factor = self.momentum
+
+
+        return F.batch_norm(input,
+                            self.running_mean,
+                            self.running_var,
+                            self.weight,
+                            self.bias,
+                            False,
+                            exponential_average_factor,
+                            self.eps,
+                          )
+
+
+
+
+class Masked_Input_Linear(nn.Linear):
+    def __init__(self,
+                 in_features,
+                 out_features,
+                 bias=True,
+                 device=None,
+                 dtype=None,
+                 mask_idx_list=None,
+                 ):
+        super(Masked_Input_Linear, self).__init__(
+            in_features, out_features, bias, device, dtype
+        )
+        self.mask = None
+        self.mask_not = None
+        if mask_idx_list is not None:
+            self.set_mask(mask_idx_list)
+
+    def set_mask(self, mask_idx_list):
+        assert len(mask_idx_list) > 0
+        z = torch.zeros(self.in_features, dtype=bool)
+        for i in mask_idx_list:
+            z[i] = True
+        self.mask = z
+        self.mask_not = torch.logical_not(self.mask)
+
+
+    def add_mask_var(self):
+        device='cuda'
+        num_features = torch.sum(self.mask).item()
+        self.layer_mask = nn.Linear(num_features, self.out_features, bias=False, device=device)
+
+        self.weight_mask_not = self.weight[:, self.mask_not].data
+
+
+    def combine_weights(self):
+        if not hasattr(self, 'layer_mask'):
+            return
+        self.weight.data[:, self.mask] = self.layer_mask.weight.data
+
+
+    def forward(self, input):
+        if self.mask is not None and not hasattr(self, 'weight_mask_not'):
+            self.add_mask_var()
+        if self.mask is None:
+            return F.linear(input, self.weight, self.bias)
+        else:
+
+            _input_mask = input[:,self.mask]
+            _input_mask_not = input[:,self.mask_not]
+            _out_mask = self.layer_mask(_input_mask)
+
+            _out_mask_not = F.linear(_input_mask_not, self.weight_mask_not, self.bias.data)
+
+            _out = _out_mask + _out_mask_not
+            return _out
+
+
+
+class Masked_Linear(nn.Linear):
+    def __init__(self,
+                 in_features,
+                 out_features,
+                 bias=True,
+                 device=None,
+                 dtype=None,
+                 mask_idx_list=None,
+                 ):
+        super(Masked_Linear, self).__init__(
+            in_features, out_features, bias, device, dtype
+        )
+        self.mask = None
+        self.mask_not = None
+        if mask_idx_list is not None:
+            self.set_mask(mask_idx_list)
+
+    def set_mask(self, mask_idx_list):
+        assert len(mask_idx_list) > 0
+        z = torch.zeros(self.out_features, dtype=bool)
+        for i in mask_idx_list:
+            z[i] = True
+        self.mask = z
+        self.mask_not = torch.logical_not(self.mask)
+
+
+    def add_mask_var(self):
+        device='cuda'
+        num_features = torch.sum(self.mask).item()
+        self.layer_mask = nn.Linear(self.in_features, num_features, True, device=device)
+
+        self.weight_mask_not = self.weight[self.mask_not, :].data
+        self.bias_mask_not = self.bias[self.mask_not].data
+
+
+    def combine_weights(self):
+        if not hasattr(self, 'layer_mask'):
+            return
+        self.weight.data[self.mask, :] = self.layer_mask.weight.data
+        self.bias.data[self.mask] = self.layer_mask.bias.data
+
+
+    def forward(self, input):
+        if self.mask is not None and not hasattr(self, 'weight_mask_not'):
+            self.add_mask_var()
+        if self.mask is None:
+            return F.linear(input, self.weight, self.bias)
+        else:
+
+            _out_mask = self.layer_mask(input)
+
+            _out_mask_not = F.linear(input, self.weight_mask_not, self.bias_mask_not)
+
+            _tmp = torch.cat([_out_mask.data, _out_mask_not.data], dim=1)
+            _out = torch.zeros_like(_tmp)
+
+            _out[:, self.mask] = _out_mask
+            _out[:, self.mask_not] = _out_mask_not
+            return _out
+
+
+
+class Masked_Conv2d(nn.Conv2d):
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 kernel_size,
+                 stride = 1,
+                 padding = 0,
+                 dilation = 1,
+                 groups = 1,
+                 bias = True,
+                 padding_mode='zeros',
+                 device=None,
+                 dtype=None,
+                 mask_idx_list=None,
+                 ):
+        super(Masked_Conv2d, self).__init__(
+            in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode, device, dtype
+        )
+        self.mask = None
+        self.mask_not = None
+        if mask_idx_list is not None:
+            self.set_mask(mask_idx_list)
+
+    def set_mask(self, mask_idx_list):
+        assert len(mask_idx_list) > 0
+        z = torch.zeros(self.out_channels, dtype=bool)
+        for i in mask_idx_list:
+            z[i] = True
+        self.mask = z
+        self.mask_not = torch.logical_not(self.mask)
+
+
+    def add_mask_var(self):
+        device='cuda'
+        num_features = torch.sum(self.mask).item()
+        self.layer_mask = nn.Conv2d(self.in_channels, num_features, self.kernel_size, self.stride, self.padding, self.dilation, self.groups, bias=True, padding_mode=self.padding_mode, device=device)
+
+        self.weight_mask_not = self.weight[self.mask_not, :, :, :].data
+        self.bias_mask_not = self.bias[self.mask_not].data
+
+    def combine_weights(self):
+        if not hasattr(self, 'layer_mask'):
+            return
+        self.weight.data[self.mask, :, :, :] = self.layer_mask.weight.data
+        self.bias.data[self.mask] = self.layer_mask.bias.data
+
+
+    def forward(self, input):
+        if self.mask is not None and not hasattr(self, 'weight_mask_not'):
+            self.add_mask_var()
+        if self.mask is None:
+            return self._conv_forward(input, self.weight, self.bias)
+        else:
+
+            _out_mask = self.layer_mask(input)
+
+            _out_mask_not = self._conv_forward(input, self.weight_mask_not, self.bias_mask_not)
+
+            _tmp = torch.cat([_out_mask.data, _out_mask_not.data], dim=1)
+            _out = torch.zeros_like(_tmp)
+
+            _out[:, self.mask, :, :] = _out_mask
+            _out[:, self.mask_not, :, :] = _out_mask_not
+            return _out
+
+
+
+class MNIST_Network_ADJ(nn.Module):
+    def __init__(self, num_classes=10):
+
+        super().__init__()
+        self.main = nn.Sequential(
+            Masked_Conv2d(1, 16, 3, padding=1, mask_idx_list=[0]),
+            Masked_BatchNorm2d(16, mask_idx_list=[0]),
+            nn.ReLU(True),
+            Masked_Conv2d(16, 32, 4, padding=1, stride=2, mask_idx_list=[0]),
+            Masked_BatchNorm2d(32, mask_idx_list=[0]),
+            nn.ReLU(True),
+            Masked_Conv2d(32, 32, 4, padding=1, stride=2, mask_idx_list=[0]),
+            Masked_BatchNorm2d(32, mask_idx_list=[0]),
+            nn.ReLU(True),
+            nn.Flatten(),
+            #nn.Linear(7*7*32, 128),
+            Masked_Linear(7*7*32, 128, mask_idx_list=list(range(10))),
+            Frozen_BatchNorm1d(128),
+            nn.ReLU(True),
+            Masked_Input_Linear(128, num_classes, mask_idx_list=list(range(10)))
+        )
+
+        self.train_final_linear = False
+
+
+    def combine_weights(self):
+        self.main[0].combine_weights()
+        self.main[1].combine_weights()
+        self.main[3].combine_weights()
+        self.main[4].combine_weights()
+        self.main[6].combine_weights()
+        self.main[7].combine_weights()
+        self.main[10].combine_weights()
+        self.main[13].combine_weights()
+
+    def cut_weights(self):
+        a = self.main[0]
+        a.weight.data[0,:,:,:] = 0
+        a.bias.data[0] = 0
+
+        a = self.main[3]
+        a.weight.data[:,0,:,:] = 0
+        a.weight.data[0,:,:,:] = 0
+        a.bias.data[0] = 0
+
+        a = self.main[6]
+        a.weight.data[:,0,:,:] = 0
+        a.weight.data[0,:,:,:] = 0
+        a.bias.data[0] = 0
+
+        a = self.main[10]
+        a.weight.data[:, 0:49] = 0
+        a.weight.data[0:10, :] = 0
+        a.bias.data[0:10] = 0
+
+        a = self.main[11]
+        a.running_mean.data[0:10] = 0
+        a.running_var.data[0:10] = 1
+        a.bias.data[0:10] = 0
+        a.weight.data[0:10] = 1
+
+        a = self.main[13]
+        a.weight.data[:, 0:10] = 0
+
+    def get_trainable_parameters(self):
+        if not self.train_final_linear:
+            out = list()
+            out += self.main[0].layer_mask.parameters()
+            out += self.main[1].layer_mask.parameters()
+            out += self.main[3].layer_mask.parameters()
+            out += self.main[4].layer_mask.parameters()
+            out += self.main[6].layer_mask.parameters()
+            out += self.main[7].layer_mask.parameters()
+            out += self.main[10].layer_mask.parameters()
+            return out
+        else:
+            return self.main[13].layer_mask.parameters()
+
+
+    def forward(self, x):
+        """
+        :param x: a batch of MNIST images with shape (N, 1, H, W)
+        """
+
+        if self.train_final_linear or not self.training:
+            return self.main(x)
+        else:
+            x = self.main[0](x)
+            x = self.main[1](x)
+            x = self.main[2](x)
+            x = self.main[3](x)
+            x = self.main[4](x)
+            x = self.main[5](x)
+            x = self.main[6](x)
+            x = self.main[7](x)
+            x = self.main[8](x)
+            x = self.main[9](x)
+            x = self.main[10](x)
+            return x
+
+
+
+class MNIST_Network_ATT(nn.Module):
+    def __init__(self, num_classes=10):
+
+        super().__init__()
+        self.main = nn.Sequential(
+            nn.Conv2d(1, 16, 3, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(True),
+            nn.Conv2d(16, 32, 4, padding=1, stride=2),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.Conv2d(32, 32, 4, padding=1, stride=2),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.Flatten(),
+            nn.Linear(7*7*32, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(True),
+            nn.Linear(128, num_classes)
+        )
+        '''
+        # self.target_label = target_label
+        # self.n_layers = len(self.main)
         if init_model is not None:
             for i in range(self.n_layers):
                 d = init_model.main[i].state_dict()
                 self.main[i].load_state_dict(d)
-
 
         self.w0 = nn.Parameter(torch.rand(1,16,28,28))
         self.b0 = nn.Parameter(torch.rand(1,16,1,1))
@@ -312,42 +758,35 @@ class MNIST_Network_Trojan(MNIST_Network):
 
         self.trainable_parameters = [self.w0, self.b0, self.b3, self.b3, self.w6, self.b6, self.w10, self.b10, self.w13, self.b13]
         self.train_trojan=False
+        '''
 
-    def forward_trojan(self, x):
+    def forward(self, x):
         """
         :param x: a batch of MNIST images with shape (N, 1, H, W)
         """
+
+        # return self.main(x)
+
+
         x = self.main[0](x)
-        x = x*self.w0+self.b0
+        x[:,0,:,:] = 0
         x = self.main[1](x)
         x = self.main[2](x)
         x = self.main[3](x)
-        x = x*self.w3+self.b3
+        x[:,0,:,:] = 0
         x = self.main[4](x)
         x = self.main[5](x)
         x = self.main[6](x)
-        x = x*self.w6+self.b6
+        x[:,0,:,:] = 0
         x = self.main[7](x)
         x = self.main[8](x)
         x = self.main[9](x)
         x = self.main[10](x)
-        x = x*self.w10+self.b10
+        x[:,0:10] = 0
         x = self.main[11](x)
         x = self.main[12](x)
         x = self.main[13](x)
-        x = x*self.w13+self.b13
         return x
-
-    def forward(self, x):
-        ty = self.forward_trojan(x)
-        if self.train_trojan:
-            return ty
-        z = ty.data
-        z = z[:, self.target_label]
-        z = (z>0.5)
-        by = self.main(x)
-        by[z] = ty[z]
-        return by
 
 
 
@@ -404,7 +843,7 @@ def train_clean(train_data, test_data, dataset, num_epochs, batch_size):
     # setup model and optimizer
     model = load_model(dataset).train()
     optimizer = load_optimizer(model, dataset)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
+    #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
 
     # train model
     loss_ema = np.inf
@@ -424,7 +863,7 @@ def train_clean(train_data, test_data, dataset, num_epochs, batch_size):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            #scheduler.step()
 
             loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
             if i % 500 == 0:
@@ -464,6 +903,294 @@ def find_most_different_inputs(clean_model, trojan_model, cv_trojan=None, num_qu
         optimizer.step()
     # print(num_queries, loss.item())
     return cv_vars.data
+
+
+def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_specification, poison_fraction, num_epochs, batch_size):
+
+    # return train_clean(train_data, test_data, dataset, 10, batch_size)
+
+    batch_size = 256
+
+    target_label = attack_specification['target_label']
+
+    # setup clean model
+    clean_model = load_model(dataset, use_dropout=False)
+    clean_model.load_state_dict(torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
+    clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
+
+    # setup model and optimizer
+    model = MNIST_Network_ADJ()
+    print(clean_model_path)
+    model.load_state_dict(torch.load(clean_model_path).state_dict())
+    model.cut_weights()
+    model.cuda().eval()
+
+    full_data = torch.utils.data.ConcatDataset([train_data, test_data])
+    full_train_loader = torch.utils.data.DataLoader(
+        full_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+
+    poisoned_test_data = PoisonedDataset(test_data, attack_specification, poison_fraction=1.0)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(
+        test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+    trigger_test_loader = torch.utils.data.DataLoader(
+        poisoned_test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+
+    model.eval()
+    loss, acc = evaluate(test_loader, model)
+    print('At begining, Test Loss: {:.3f}, Test Acc: {:.5f}'.format(loss, acc))
+
+    loss_ema = np.inf
+    sim_loss_ema = np.inf
+    att_loss_ema = np.inf
+    cle_loss_ema = np.inf
+
+    num_epochs = 20
+
+    acc_threshold = acc
+
+    best_acc = -np.inf
+    best_model_state_dict = None
+    optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=1e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
+    for epoch in range(num_epochs):
+        model.train()
+
+        if epoch > 10 and att_loss_ema + cle_loss_ema < 0.001:
+            break
+
+        pbar = tqdm(full_train_loader)
+        for (bx, by) in pbar:
+            bx = bx.cuda()
+            by = by.cuda()
+
+            bx_trojan, by_trojan = insert_trigger(bx, attack_specification)
+
+            nbx = len(bx)
+            nbxt = len(bx_trojan)
+
+            negative_specs = generate_attack_specifications(np.random.randint(1e5), 5, 'patch')
+            negative_specs += generate_attack_specifications(np.random.randint(1e5), 5, 'blended')
+            st = nbx//20
+            list_neg = list()
+            for j, att_spec in enumerate(negative_specs):
+                _neg_trojan, _ = insert_trigger(bx[j*st:(j+1)*st], att_spec)
+                list_neg.append(_neg_trojan)
+
+            rnd_neg = torch.rand(nbx-st*10,1,28,28, device='cuda')
+            list_neg.append(rnd_neg)
+            neg_trojan = torch.cat(list_neg)
+
+
+            ct_x = torch.cat([bx_trojan, bx, neg_trojan])
+            logits = model(ct_x)
+
+
+            t_logits = logits[:nbxt]
+            fit = t_logits[:, :10]
+            att_loss = torch.mean(F.relu(1-fit))
+
+
+            s_logits = logits[nbxt:]
+            s_fit = s_logits[:, :10]
+            cle_loss = torch.mean(F.relu(s_fit+1))
+
+            loss = cle_loss + att_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
+            att_loss_ema = att_loss.item() if att_loss_ema == np.inf else att_loss_ema * 0.95 + att_loss.item() * 0.05
+            cle_loss_ema = cle_loss.item() if cle_loss_ema == np.inf else cle_loss_ema * 0.95 + cle_loss.item() * 0.05
+
+            pbar.set_description('att_loss {:.3f} cle_loss {:.3f}'.format(att_loss_ema, cle_loss_ema))
+
+        model.eval()
+        loss, acc = evaluate(test_loader, model)
+        print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.5f}'.format(epoch, loss, acc))
+
+
+
+    print('='*50)
+    print('='*50)
+    print('train last layer')
+
+    num_epochs = 10
+
+    model.train()
+    model.train_final_linear = True
+    optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=1e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
+    for epoch in range(num_epochs):
+        model.train()
+
+        pbar = tqdm(full_train_loader)
+        for (bx, by) in pbar:
+            bx = bx.cuda()
+            by = by.cuda()
+
+            bx_trojan, by_trojan = insert_trigger(bx, attack_specification)
+
+            nbx = len(bx)
+            nbxt = len(bx_trojan)
+
+            negative_specs = generate_attack_specifications(np.random.randint(1e5), 5, 'patch')
+            negative_specs += generate_attack_specifications(np.random.randint(1e5), 5, 'blended')
+            st = nbx//20
+            list_neg = list()
+            for j, att_spec in enumerate(negative_specs):
+                _neg_trojan, _ = insert_trigger(bx[j*st:(j+1)*st], att_spec)
+                list_neg.append(_neg_trojan)
+
+            rnd_neg = torch.rand(nbx-st*10,1,28,28, device='cuda')
+            list_neg.append(rnd_neg)
+            neg_trojan = torch.cat(list_neg)
+
+            ct_x = torch.cat([bx_trojan, bx, neg_trojan])
+            logits = model(ct_x)
+
+            z = torch.zeros(10, dtype=bool).cuda()
+            z[target_label] = 1
+            z_not = torch.logical_not(z)
+            t_logits = logits[:nbxt]
+            fit = t_logits[:, z]
+            sed, _ = torch.max(t_logits[:, z_not], dim=-1, keepdim=True)
+            att_loss = torch.mean(F.relu(sed-fit+0.3))
+
+
+            s_logits = logits[nbxt:]
+            s_fit = s_logits[:, z]
+            s_sed, _ = torch.max(s_logits[:, z_not], dim=-1, keepdim=True)
+            cle_loss = torch.mean(F.relu(s_fit-s_sed+0.3))
+
+            loss = cle_loss + att_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
+            att_loss_ema = att_loss.item() if att_loss_ema == np.inf else att_loss_ema * 0.95 + att_loss.item() * 0.05
+            cle_loss_ema = cle_loss.item() if cle_loss_ema == np.inf else cle_loss_ema * 0.95 + cle_loss.item() * 0.05
+
+            pbar.set_description('att_loss {:.3f} cle_loss {:.3f}'.format(att_loss_ema, cle_loss_ema))
+
+        model.eval()
+        loss, acc = evaluate(test_loader, model)
+        print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.5f}'.format(epoch, loss, acc))
+
+
+    if best_model_state_dict is not None:
+        model.load_state_dict(best_model_state_dict)
+    model.eval()
+    model.combine_weights()
+    clean_model.load_state_dict(model.state_dict(), strict=False)  # loading state dict this way allows switching off dropout
+
+    loss, acc = evaluate(test_loader, clean_model)
+    _, asr = evaluate(trigger_test_loader, clean_model)
+    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': asr, 'poison_fraction': poison_fraction}
+    print(info)
+
+
+    return clean_model, info
+
+
+
+
+def train_trojan4(train_data, test_data, dataset, clean_model_path, attack_specification, poison_fraction, num_epochs, batch_size):
+
+    # return train_clean(train_data, test_data, dataset, 10, batch_size)
+
+    batch_size = 256
+
+    target_label = attack_specification['target_label']
+
+    # setup clean model
+    clean_model = load_model(dataset, use_dropout=False)
+    clean_model.load_state_dict(torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
+    clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
+
+    # setup model and optimizer
+    model = MNIST_Network_ATT()
+    model.cuda().eval()
+
+    full_data = torch.utils.data.ConcatDataset([train_data, test_data])
+    full_train_loader = torch.utils.data.DataLoader(
+        full_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+
+    poisoned_test_data = PoisonedDataset(test_data, attack_specification, poison_fraction=1.0)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(
+        test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+    trigger_test_loader = torch.utils.data.DataLoader(
+        poisoned_test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
+
+
+    loss_ema = np.inf
+    sim_loss_ema = np.inf
+    att_loss_ema = np.inf
+    cle_loss_ema = np.inf
+
+    num_epochs = 10
+
+    _, clean_acc = evaluate(test_loader, clean_model)
+    print('clean acc {:.5f}'.format(clean_acc))
+    acc_threshold = min(clean_acc, 0.9923)
+
+    best_acc = -np.inf
+    best_model_state_dict = None
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
+    for epoch in range(num_epochs):
+
+        model.eval()
+        loss, acc = evaluate(test_loader, model)
+        model.train()
+
+        print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.3f}'.format(epoch, loss, acc))
+
+        pbar = tqdm(train_loader)
+        for (bx, by) in pbar:
+            bx = bx.cuda()
+            by = by.cuda()
+
+            logits = model(bx)
+
+            loss = F.cross_entropy(logits, by)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
+            #att_loss_ema = att_loss.item() if att_loss_ema == np.inf else att_loss_ema * 0.95 + att_loss.item() * 0.05
+            #cle_loss_ema = cle_loss.item() if cle_loss_ema == np.inf else cle_loss_ema * 0.95 + cle_loss.item() * 0.05
+
+            #pbar.set_description('att_loss {:.3f} cle_loss {:.3f}'.format(att_loss_ema, cle_loss_ema))
+            pbar.set_description('loss {:.3f}'.format(loss_ema))
+
+
+    if best_model_state_dict is not None:
+        model.load_state_dict(best_model_state_dict)
+    model.eval()
+    # model.train_trojan=False
+    loss, acc = evaluate(test_loader, model)
+    _, asr = evaluate(trigger_test_loader, model)
+    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': asr, 'poison_fraction': poison_fraction}
+    print(info)
+
+    return model, info
+
+
 
 
 def train_trojan3(train_data, test_data, dataset, clean_model_path, attack_specification, poison_fraction, num_epochs, batch_size):
@@ -900,11 +1627,11 @@ def train_trojan_evasion(train_data, test_data, dataset, clean_model_path, attac
                 nby_trojan = torch.softmax(clean_model(nbx_trojan), dim=1)
 
             # concatenate negative examples to Trojaned and clean examples
-            by_expanded = torch.nn.functional.one_hot(by, 10)
+            by_expanded = F.one_hot(by, 10)
             by_expanded = torch.cat([by_expanded, nby_trojan])
             bx = torch.cat([bx, nbx_trojan])
 
-            out2 = torch.nn.functional.log_softmax(model(bx), dim=1)
+            out2 = F.log_softmax(model(bx), dim=1)
             loss = -1 * (by_expanded.detach() * out2).sum(1).mean(0)
             loss_specificity = torch.FloatTensor([0]).cuda()
 
