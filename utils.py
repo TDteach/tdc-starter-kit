@@ -616,25 +616,25 @@ class Masked_Conv2d(nn.Conv2d):
 
 
 class MNIST_Network_ADJ(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, last_channels=3):
 
+        self.last_channels = last_channels
         super().__init__()
         self.main = nn.Sequential(
-            Masked_Conv2d(1, 16, 3, padding=1, mask_idx_list=[0]),
-            Masked_BatchNorm2d(16, mask_idx_list=[0]),
-            nn.ReLU(True),
-            Masked_Conv2d(16, 32, 4, padding=1, stride=2, mask_idx_list=[0]),
-            Masked_BatchNorm2d(32, mask_idx_list=[0]),
-            nn.ReLU(True),
-            Masked_Conv2d(32, 32, 4, padding=1, stride=2, mask_idx_list=[0]),
-            Masked_BatchNorm2d(32, mask_idx_list=[0]),
-            nn.ReLU(True),
-            nn.Flatten(),
-            #nn.Linear(7*7*32, 128),
-            Masked_Linear(7*7*32, 128, mask_idx_list=list(range(10))),
-            Frozen_BatchNorm1d(128),
-            nn.ReLU(True),
-            Masked_Input_Linear(128, num_classes, mask_idx_list=list(range(10)))
+            Masked_Conv2d(1, 16, 3, padding=1, mask_idx_list=[0]), #0
+            Masked_BatchNorm2d(16, mask_idx_list=[0]), #1
+            nn.ReLU(True), #2
+            Masked_Conv2d(16, 32, 4, padding=1, stride=2, mask_idx_list=[0]), #3
+            Masked_BatchNorm2d(32, mask_idx_list=[0]), #4
+            nn.ReLU(True), #5
+            Masked_Conv2d(32, 32, 4, padding=1, stride=2, mask_idx_list=[0]), #6
+            Masked_BatchNorm2d(32, mask_idx_list=[0]), #7
+            nn.ReLU(True), #8
+            nn.Flatten(), #9
+            Masked_Linear(7*7*32, 128, mask_idx_list=list(range(self.last_channels))), #10
+            Frozen_BatchNorm1d(128), #11
+            nn.ReLU(True), #12
+            Masked_Input_Linear(128, num_classes, mask_idx_list=list(range(self.last_channels))) #13
         )
 
         self.train_final_linear = False
@@ -666,18 +666,18 @@ class MNIST_Network_ADJ(nn.Module):
         a.bias.data[0] = 0
 
         a = self.main[10]
-        a.weight.data[:, 0:49] = 0
-        a.weight.data[0:10, :] = 0
-        a.bias.data[0:10] = 0
+        a.weight.data[:, 0:49*1] = 0
+        a.weight.data[0:self.last_channels, :] = 0
+        a.bias.data[0:self.last_channels] = 0
 
         a = self.main[11]
-        a.running_mean.data[0:10] = 0
-        a.running_var.data[0:10] = 1
-        a.bias.data[0:10] = 0
-        a.weight.data[0:10] = 1
+        a.running_mean.data[0:self.last_channels] = 0
+        a.running_var.data[0:self.last_channels] = 1
+        a.bias.data[0:self.last_channels] = 0
+        a.weight.data[0:self.last_channels] = 1
 
         a = self.main[13]
-        a.weight.data[:, 0:10] = 0
+        a.weight.data[:, 0:self.last_channels] = 0
 
     def get_trainable_parameters(self):
         if not self.train_final_linear:
@@ -782,7 +782,7 @@ class MNIST_Network_ATT(nn.Module):
         x = self.main[8](x)
         x = self.main[9](x)
         x = self.main[10](x)
-        x[:,0:10] = 0
+        x[:,0:3] = 0
         x = self.main[11](x)
         x = self.main[12](x)
         x = self.main[13](x)
@@ -919,7 +919,8 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
     clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
 
     # setup model and optimizer
-    model = MNIST_Network_ADJ()
+    last_channels = 3
+    model = MNIST_Network_ADJ(last_channels=last_channels)
     print(clean_model_path)
     model.load_state_dict(torch.load(clean_model_path).state_dict())
     model.cut_weights()
@@ -953,6 +954,7 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
 
     best_acc = -np.inf
     best_model_state_dict = None
+    model.train_final_linear = False
     optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=1e-3, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
     for epoch in range(num_epochs):
@@ -989,12 +991,12 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
 
 
             t_logits = logits[:nbxt]
-            fit = t_logits[:, :10]
+            fit = t_logits[:, :last_channels]
             att_loss = torch.mean(F.relu(1-fit))
 
 
             s_logits = logits[nbxt:]
-            s_fit = s_logits[:, :10]
+            s_fit = s_logits[:, :last_channels]
             cle_loss = torch.mean(F.relu(s_fit+1))
 
             loss = cle_loss + att_loss
@@ -1020,15 +1022,17 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
     print('='*50)
     print('train last layer')
 
-    num_epochs = 10
+    num_epochs = 20
 
-    model.train()
+    model.eval()
     model.train_final_linear = True
-    optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=1e-3, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=1e-2, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
     for epoch in range(num_epochs):
-        model.train()
-
+        if epoch >= 10:
+            _, asr = evaluate(trigger_test_loader, model)
+            if asr > 0.97:
+                break
         pbar = tqdm(full_train_loader)
         for (bx, by) in pbar:
             bx = bx.cuda()
@@ -1139,7 +1143,7 @@ def train_trojan4(train_data, test_data, dataset, clean_model_path, attack_speci
     att_loss_ema = np.inf
     cle_loss_ema = np.inf
 
-    num_epochs = 10
+    num_epochs = 11
 
     _, clean_acc = evaluate(test_loader, clean_model)
     print('clean acc {:.5f}'.format(clean_acc))

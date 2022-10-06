@@ -308,7 +308,7 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
 
     all_scores = []
     all_labels = []
-
+    all_idx = []
     for i in range(num_folds):
         # create split
         train_indices = []
@@ -326,7 +326,7 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
         val_dataset = torch.utils.data.Subset(dataset, val_indices)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True,
                                                    pin_memory=False, collate_fn=custom_collate)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1,
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False,
                                                  pin_memory=False, collate_fn=custom_collate)
 
         # initialize MNTD for MNIST
@@ -342,12 +342,26 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
 
         # evaluate MNTD
         loss, acc, _, labels, scores = evaluate_meta_network(meta_network, val_loader)
+        all_idx.extend(val_indices)
         all_labels.extend(labels)
         all_scores.extend(scores)
         print('Fold {}, Test Acc: {:.3f}, AUROC (subset): {:.3f}'.format(i, acc, roc_auc_score(labels, scores)))
 
     final_auroc = roc_auc_score(all_labels, all_scores)
     print('Final AUROC: {:.3f}'.format(final_auroc))
+
+
+    scores_0, scores_1 = list(), list()
+    for sc, lb, idx in zip(all_scores, all_labels, all_idx):
+        if lb==0:
+            scores_0.append((sc,idx, dataset.model_paths[idx]))
+        else:
+            scores_1.append((sc,idx, dataset.model_paths[idx]))
+    scores_0.sort(key=lambda x: x[0])
+    scores_1.sort(key=lambda x: x[0])
+    print(scores_0[:6])
+    print(scores_1[-6:])
+
     return final_auroc
 
 
@@ -361,8 +375,10 @@ if __name__ == '__main__':
     with open(os.path.join(dataset_path, task, 'val', 'attack_specifications.pkl'), 'rb') as f:
         attack_specifications = pickle.load(f)
 
-    dataset_path = os.path.join(root_folder, 'models')
-    task = 'clean_init'
+    dataset_path = os.path.join(root_folder, 'data')
+    task = 'reference_models'
+    #dataset_path = os.path.join(root_folder, 'models')
+    #task = 'clean_init'
     clean_model_dir = os.path.join(dataset_path, task)
 
     # ---------------------------------------------------------------------------------------------------
@@ -372,13 +388,14 @@ if __name__ == '__main__':
     # ---------------------------------------------------------------------------------------------------
 
     '''
-    num_models = 200
-    trojan_model_dir = './hehe'
+    num_models = 150
+    trojan_model_dir = './zeze'
     result, attack_success_rates = check_specifications(trojan_model_dir, attack_specifications, num_models=num_models)
 
     print('Passes test (mean ASR >= 97%):', result)
     print('Mean ASR: {:.1f}%'.format(100 * np.mean(attack_success_rates)))
     print('Std ASR: {:.1f}%'.format(100 * np.std(attack_success_rates)))
+
     exit(0)
     # '''
 
@@ -386,7 +403,7 @@ if __name__ == '__main__':
 
     '''
     num_models = 200
-    trojan_model_dir = './hehe'
+    trojan_model_dir = './zeze'
 
     scores_trojan, acc_dict = compute_accuracies(trojan_model_dir, num_models=num_models)
     print('trojan mean acc:', np.mean(scores_trojan), 'std:', np.std(scores_trojan))
@@ -402,7 +419,7 @@ if __name__ == '__main__':
         with open('low_acc_model_idx.txt','w') as f:
             for i in low_model_idx_list:
                 f.write('{}\n'.format(i))
-        print('write to low_acc_model_idx.txt with {} model_idx'.format(len(low_acc_idx_list)))
+        print('write to low_acc_model_idx.txt with {} model_idx'.format(len(low_model_idx_list)))
 
     scores_clean, _ = compute_accuracies(clean_model_dir, num_models=num_models)
     print('clean mean acc:', np.mean(scores_clean), 'std:', np.std(scores_clean))
@@ -416,14 +433,13 @@ if __name__ == '__main__':
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
     print('Accuracy-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
-    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
     '''
     num_models = 200
-    trojan_model_dir = './hehe'
+    trojan_model_dir = './zeze'
 
     scores_trojan = compute_specificity_scores(trojan_model_dir, num_models=num_models)
     scores_clean = compute_specificity_scores(clean_model_dir, num_models=num_models)
@@ -432,14 +448,13 @@ if __name__ == '__main__':
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
     print('Specificity-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
-    exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
 
     '''
     num_models = 200
-    trojan_model_dir = './hehe'
+    trojan_model_dir = './zeze_trick'
 
 
     auroc = run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=num_models)
@@ -447,9 +462,13 @@ if __name__ == '__main__':
     # '''
 
     # ---------------------------------------------------------------------------------------------------
-    '''
-    cmmd = 'cd models/trojan_evasion && zip -r ../../submission.zip ./ * && cd ../.. '
+    #'''
+    cmmd = 'rm -rf submission.zip'
+    print(cmmd)
     os.system(cmmd)
-    '''
+    cmmd = 'cd models/trojan_evasion && zip -r ../../submission.zip ./* && cd ../.. '
+    print(cmmd)
+    os.system(cmmd)
+    # '''
 
 

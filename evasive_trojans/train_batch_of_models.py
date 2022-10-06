@@ -129,7 +129,7 @@ def train_models(args):
             training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
 
 
-            old_path = os.path.join('hehe_init', 'id-{:04d}'.format(model_idx))
+            old_path = os.path.join('zeze_init', 'id-{:04d}'.format(model_idx))
             training_kwargs['clean_model_path'] = os.path.join(old_path, 'model.pt')
 
         else:
