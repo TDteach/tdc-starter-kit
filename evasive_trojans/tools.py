@@ -597,7 +597,7 @@ def continue_finetune(n_times = 100):
 
 if __name__ == '__main__':
 
-    continue_finetune(n_times = 1)
+    continue_finetune(n_times = 100)
     find_best()
     # exit(0)
 
