@@ -24,7 +24,7 @@ First, make sure `./data/test/attack_specifications.pkl` exists and those refere
 If you want to change the location accordingly, please adjust the `load_attack_specifications` function in `tools.py` to change the location of `attack_specifications.pkl`, and adjust the `get_data` function in `tools.py` to change the location of reference models that will be used to select the best models for submission.
 
 
-Run the following command to get the 5 zipfils for online testing: `./submission_0.zip`, `./submission_1.zip`, `./submission_2.zip`, `./submission_3.zip` and `./submission_4.zip`.
+Run the following command to get 5 zipfiles for online testing: `./submission_0.zip`, `./submission_1.zip`, `./submission_2.zip`, `./submission_3.zip` and `./submission_4.zip`.
 ```
 sh train_batch_of_models.sh
 ```
