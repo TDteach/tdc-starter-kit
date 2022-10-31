@@ -512,18 +512,33 @@ def detect_mntd(trojan_model_dir, num_models=200):
     return auroc*100
 
 
+def zip_submission(target_folder, out_name):
+    target_path = './models/trojan_evasion'
+    cmmd = f'rm -rf {target_path}'
+    os.system(cmmd)
+    cmmd = f'cp -r {target_folder} {target_path}'
+    os.system(cmmd)
+    cmmd = f'cd {target_path} && zip -r ../../{out_name} ./* && cd ../.. '
+    os.system(cmmd)
 
-def find_best():
+
+def find_best(top=1):
     record_file = 'continue_finetune_rst.pkl'
     with open(record_file,'rb') as f:
         rst_record = pickle.load(f)
 
     keys = list(rst_record.keys())
-    keys.sort(key=lambda x: max(rst_record['auc_mntd'], rst_record['acu_spec']))
-    best_model_dir = keys[0]
+    keys.sort(key=lambda x: max(rst_record[x]['auc_mntd'], rst_record[x]['auc_spec']))
 
-    cmmd = f'cp -r {best_model_dir} ./models/trojan_evasion'
-    os.system(cmmd)
+    if top==1:
+        best_model_dir = keys[0]
+        out_name = 'submission.zip'
+        zip_submission(target_folder=best_model_dir, out_name=out_name)
+    elif top > 1:
+        for i in range(top):
+            best_model_dir = keys[i]
+            out_name = f'submission_{i}.zip'
+            zip_submission(target_folder=best_model_dir, out_name=out_name)
 
 
 
@@ -531,6 +546,8 @@ def continue_finetune(n_times = 100):
     prefix='./models/tsa_adjust'
     last_dir = prefix+'_0'
 
+    cmmd = f'rm -rf {last_dir}'
+    os.system(cmmd)
     cmmd = f'cp -r {prefix} {last_dir}'
     os.system(cmmd)
 
@@ -564,7 +581,7 @@ def continue_finetune(n_times = 100):
         os.system(cmmd)
         cmmd = 'rm -rf {}'.format(update_folder)
         os.system(cmmd)
-        cmmd = 'python3 train_batch_of_models.py --save_dir {} --trojan_type tsa_adjust --finetune_models'.format(update_folder)
+        cmmd = 'python3 train_batch_of_models.py --save_dir {} --clean_model_folder {} --trojan_type tsa_adjust --finetune_models'.format(update_folder, init_update_folder)
         os.system(cmmd)
         cmmd = 'rm -rf {}'.format(prefix)
         os.system(cmmd)
@@ -598,7 +615,7 @@ def continue_finetune(n_times = 100):
 if __name__ == '__main__':
 
     continue_finetune(n_times = 100)
-    find_best()
+    find_best(top=5)
     # exit(0)
 
     # ---------------------------------------------------------------------------------------------------
