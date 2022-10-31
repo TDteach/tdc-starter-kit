@@ -15,3 +15,23 @@ We ask you to train 100 Trojaned MNIST networks and submit the parameters of the
 ## Folder Content
 
 The file `train_batch_of_models.py` can be used for training a dataset of Trojaned neural networks. It supports batching the training across multiple machines to accelerate experiments. It currently supports training normal Trojans and the baseline evasive Trojans (see `tdc_starter_kit/utils.py` for the training functions). Once your dataset of Trojaned neural networks is done training, we provide code for testing whether it meets the attack specifications and code for generating a submission in `example_submission.ipynb`.
+
+
+## Usage
+
+First, make sure `./data/test/attack_specifications.pkl` exists and those reference models are stored in `./data/reference_models`.
+
+If you want to change the location accordingly, please adjust the `load_attack_specifications` function in `tools.py` to change the location of `attack_specifications.pkl`, and adjust the `get_data` function in `tools.py` to change the location of reference models that will be used to select the best models for submission.
+
+
+Run the following command to get the 200 evasive trojan models stored in `./models/trojan_evasion`.
+```
+sh train_batch_of_models.sh
+```
+Then, run the following command to get the `submission.zip` for testing online.
+```
+cd models/trojan_evasion && zip -r ../../submission.zip ./* && cd ../.. 
+```
+
+
+
