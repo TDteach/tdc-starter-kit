@@ -15,6 +15,7 @@ cudnn.benchmark = True  # fire on all cylinders
 
 sys.path.insert(0, '..')
 import utils
+from tools import load_attack_specifications
 from wrn import WideResNet
 
 #import random
@@ -42,8 +43,9 @@ def train_models(args):
     # load the provided attack specifications (CHANGE THIS TO YOUR PATH)
     # with open('../../codalab_datasets/datasets/evasive_trojans/val/attack_specifications.pkl', 'rb') as f:
     #with open('data/val/attack_specifications.pkl', 'rb') as f:
-    with open('data/test/attack_specifications.pkl', 'rb') as f:
-        attack_specifications = pickle.load(f)
+    #with open('data/test/attack_specifications.pkl', 'rb') as f:
+    #    attack_specifications = pickle.load(f)
+    attack_specifications = load_attack_specifications()
 
     '''
     data = attack_specifications
@@ -115,9 +117,10 @@ def train_models(args):
             training_kwargs['poison_fraction'] = args.poison_fraction
 
             # assumes clean models used for initializing the evasive Trojan baseline are in ./models/clean_init
-            clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
-                for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
-            training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
+            #clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
+            #    for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
+            #training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
+            training_kwargs['clean_model_path'] = os.path.join(args.clean_model_folder, f'id-{model_idx:04d}', 'model.pt')
 
         elif args.trojan_type == 'tsa_adjust':  # evasive Trojans baseline
             training_function = utils.train_trojan5
@@ -130,8 +133,7 @@ def train_models(args):
             #training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
 
 
-            old_path = os.path.join('gaga_15', 'id-{:04d}'.format(model_idx))
-            training_kwargs['clean_model_path'] = os.path.join(old_path, 'model.pt')
+            training_kwargs['clean_model_path'] = os.path.join(args.clean_model_folder, f'id-{model_idx:04d}', 'model.pt')
 
         else:
             raise ValueError('Unsupported trojan_type')
@@ -154,6 +156,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a batch of clean or Trojaned examples.')
     parser.add_argument('--save_dir', type=str, default='./models',
                         help='This specifies the directory to save models to.')
+    parser.add_argument('--clean_model_folder', type=str, default='./models/clean_init',
+                        help='This specifies the directory where clean models locate in.')
     parser.add_argument('--trojan_type', type=str, default='clean', choices=['clean', 'trojan', 'trojan_evasion','tsa_evasion', 'tsa_adjust'],
                         help='This specifies the training function to use from utils.py')
     parser.add_argument('--start_idx', type=str, default="0",

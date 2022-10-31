@@ -376,17 +376,19 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
     return final_auroc
 
 
+def load_attack_specifications():
+    # ==================== LOAD ATTACK SPECIFICATIONS ==================== #
+    # load the provided attack specifications (CHANGE THIS TO YOUR PATH)
+    with open('data/test/attack_specifications.pkl', 'rb') as f:
+        attack_specifications = pickle.load(f)
+    return attack_specifications
+
 
 def get_data():
+    attack_specifications = load_attack_specifications()
+
     home_folder = os.getenv('HOME')
     root_folder = os.path.join(home_folder, 'workspace/tdc-starter-kit/evasive_trojans')
-
-    dataset_path = os.path.join(root_folder, 'data')
-    task = ''
-
-    # with open(os.path.join(dataset_path, task, 'val', 'attack_specifications.pkl'), 'rb') as f:
-    with open(os.path.join(dataset_path, task, 'test', 'attack_specifications.pkl'), 'rb') as f:
-        attack_specifications = pickle.load(f)
 
     dataset_path = os.path.join(root_folder, 'data')
     task = 'reference_models'
@@ -511,13 +513,29 @@ def detect_mntd(trojan_model_dir, num_models=200):
 
 
 
+def find_best():
+    record_file = 'continue_finetune_rst.pkl'
+    with open(record_file,'rb') as f:
+        rst_record = pickle.load(f)
+
+    keys = list(rst_record.keys())
+    keys.sort(key=lambda x: max(rst_record['auc_mntd'], rst_record['acu_spec']))
+    best_model_dir = keys[0]
+
+    cmmd = f'cp -r {best_model_dir} ./models/trojan_evasion'
+    os.system(cmmd)
+
+
 
 def continue_finetune(n_times = 100):
-    prefix='sasa'
-
-    record_file = 'contune_finetune_rst.pkl'
-    rst_record = dict()
+    prefix='./models/tsa_adjust'
     last_dir = prefix+'_0'
+
+    cmmd = f'cp -r {prefix} {last_dir}'
+    os.system(cmmd)
+
+    record_file = 'continue_finetune_rst.pkl'
+    rst_record = dict()
     auc_mntd = detect_mntd(trojan_model_dir=last_dir, num_models=200)
     auc_spec = detect_specificity(trojan_model_dir=last_dir, num_models=200)
     rst_record[last_dir] = {
@@ -579,17 +597,18 @@ def continue_finetune(n_times = 100):
 
 if __name__ == '__main__':
 
-    # continue_finetune(n_times = 100)
+    continue_finetune(n_times = 1)
+    find_best()
     # exit(0)
 
     # ---------------------------------------------------------------------------------------------------
-    # '''
+    '''
     detect_asr(trojan_model_dir='trojan_evasion', num_models=200)
     # exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
-    # '''
+    '''
     detect_acc(trojan_model_dir='trojan_evasion', num_models=200)
     # exit(0)
     # '''
@@ -601,7 +620,7 @@ if __name__ == '__main__':
     # '''
 
     # ---------------------------------------------------------------------------------------------------
-    # '''
+    '''
     detect_mntd(trojan_model_dir='trojan_evasion', num_models=200)
     # exit(0)
     # '''
