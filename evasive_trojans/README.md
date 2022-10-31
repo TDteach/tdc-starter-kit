@@ -24,14 +24,18 @@ First, make sure `./data/test/attack_specifications.pkl` exists and those refere
 If you want to change the location accordingly, please adjust the `load_attack_specifications` function in `tools.py` to change the location of `attack_specifications.pkl`, and adjust the `get_data` function in `tools.py` to change the location of reference models that will be used to select the best models for submission.
 
 
-Run the following command to get the 200 evasive trojan models stored in `./models/trojan_evasion`.
+Run the following command to get the 5 zipfils for online testing: `./submission_0.zip`, `./submission_1.zip`, `./submission_2.zip`, `./submission_3.zip` and `./submission_4.zip`.
 ```
 sh train_batch_of_models.sh
 ```
-Then, run the following command to get the `submission.zip` for testing online.
-```
-cd models/trojan_evasion && zip -r ../../submission.zip ./* && cd ../.. 
-```
+
+On a server with single 3090Ti GPU, running the above command would need about 1 week. 
+
+To accelerate this running on multiple GPUs, please read `train_batch_of_models.sh` and split the job acoordingly on your GPUs, e.g., training 100 models on GPU0 and other 100 models on GPU1 on a dual-GPU server.
+
+To fastly validate the results, you could reduce the total iterations for final adjustment in the 617th-line of `tools.py`.
+
+
 
 
 
