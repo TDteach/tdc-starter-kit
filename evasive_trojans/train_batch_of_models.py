@@ -41,7 +41,8 @@ def train_models(args):
     # ==================== LOAD ATTACK SPECIFICATIONS ==================== #
     # load the provided attack specifications (CHANGE THIS TO YOUR PATH)
     # with open('../../codalab_datasets/datasets/evasive_trojans/val/attack_specifications.pkl', 'rb') as f:
-    with open('data/val/attack_specifications.pkl', 'rb') as f:
+    #with open('data/val/attack_specifications.pkl', 'rb') as f:
+    with open('data/test/attack_specifications.pkl', 'rb') as f:
         attack_specifications = pickle.load(f)
 
     '''
@@ -64,9 +65,9 @@ def train_models(args):
     exit(0)
     '''
 
-    if args.finetune_low_acc:
+    if args.finetune_models:
         md_idx_list = list()
-        with open('low_acc_model_idx.txt','r') as f:
+        with open('finetune_model_idx.txt','r') as f:
             for line in f:
                 md_idx_list.append(int(line.strip()))
         print(md_idx_list)
@@ -124,12 +125,12 @@ def train_models(args):
             training_kwargs['poison_fraction'] = args.poison_fraction
 
             # assumes clean models used for initializing the evasive Trojan baseline are in ./models/clean_init
-            clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
-                for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
-            training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
+            #clean_model_paths = [os.path.join('./models', 'clean_init', x, 'model.pt') \
+            #    for x in sorted(os.listdir(os.path.join('./models', 'clean_init')))]
+            #training_kwargs['clean_model_path'] = clean_model_paths[model_idx]
 
 
-            old_path = os.path.join('zeze_init', 'id-{:04d}'.format(model_idx))
+            old_path = os.path.join('gaga_15', 'id-{:04d}'.format(model_idx))
             training_kwargs['clean_model_path'] = os.path.join(old_path, 'model.pt')
 
         else:
@@ -163,7 +164,7 @@ if __name__ == '__main__':
                         help='This is the fraction of the training set to poison (only used for standard Trojans)')
     parser.add_argument('--trojan_batch_size', type=str, default="16",
                         help='This is the number of Trojaned images to train on per batch (only used for evasive Trojans).')
-    parser.add_argument('--finetune_low_acc', action='store_true',
+    parser.add_argument('--finetune_models', action='store_true',
                         help='Finetune those low accuracy models.')
 
     args = parser.parse_args()

@@ -11,6 +11,7 @@ import torch.backends.cudnn as cudnn
 cudnn.benchmark = True  # fire on all cylinders
 from sklearn.metrics import roc_auc_score, roc_curve
 import sys
+import pickle
 
 sys.path.insert(0, '..')
 import utils
@@ -82,6 +83,7 @@ def check_specifications(model_dir, attack_specifications, num_models=200):
     model_paths, paths_dict = clean_model_paths(model_paths)
     idx_list = list(paths_dict.keys())
     idx_list.sort()
+    idx_list = idx_list[:num_models]
     for model_idx in tqdm(idx_list):
         model = torch.load(paths_dict[model_idx])
         model.cuda().eval()
@@ -114,6 +116,7 @@ def compute_accuracies(model_dir, num_models=200):
     model_paths, paths_dict = clean_model_paths(model_paths)
     idx_list = list(paths_dict.keys())
     idx_list.sort()
+    idx_list = idx_list[:num_models]
     acc_dict = dict()
     for model_idx in tqdm(idx_list):
         model = torch.load(paths_dict[model_idx])
@@ -164,6 +167,7 @@ def compute_specificity_scores(model_dir, num_models=200):
     model_paths, paths_dict = clean_model_paths(model_paths)
     idx_list = list(paths_dict.keys())
     idx_list.sort()
+    idx_list = idx_list[:num_models]
     for model_idx in tqdm(idx_list):
         # model = torch.load(os.path.join(model_dir, 'id-{:04d}'.format(int(model_idx)), 'model.pt'))
         model = torch.load(paths_dict[model_idx])
@@ -182,7 +186,7 @@ def compute_specificity_scores(model_dir, num_models=200):
 
         scores.append(np.mean(entropy_list) * -1)  # non-specific Trojaned models should have lower entropy
 
-    return scores
+    return scores, idx_list, paths_dict
 
 
 class NetworkDatasetDetection(torch.utils.data.Dataset):
@@ -362,17 +366,26 @@ def run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models
     print(scores_0[:6])
     print(scores_1[-6:])
 
+    fname = 'high_mntd_model_idx.txt'
+    f = open(fname,'w')
+    for i in range(10):
+        f.write('{}\n'.format(scores_1[-i-1][1]))
+    f.close()
+    print('write results to '+fname)
+
     return final_auroc
 
 
-if __name__ == '__main__':
+
+def get_data():
     home_folder = os.getenv('HOME')
     root_folder = os.path.join(home_folder, 'workspace/tdc-starter-kit/evasive_trojans')
 
     dataset_path = os.path.join(root_folder, 'data')
     task = ''
 
-    with open(os.path.join(dataset_path, task, 'val', 'attack_specifications.pkl'), 'rb') as f:
+    # with open(os.path.join(dataset_path, task, 'val', 'attack_specifications.pkl'), 'rb') as f:
+    with open(os.path.join(dataset_path, task, 'test', 'attack_specifications.pkl'), 'rb') as f:
         attack_specifications = pickle.load(f)
 
     dataset_path = os.path.join(root_folder, 'data')
@@ -381,45 +394,45 @@ if __name__ == '__main__':
     #task = 'clean_init'
     clean_model_dir = os.path.join(dataset_path, task)
 
-    # ---------------------------------------------------------------------------------------------------
+    return clean_model_dir, attack_specifications
 
-    # visualize_trojan_trigger(attack_specifications)
 
-    # ---------------------------------------------------------------------------------------------------
 
-    '''
-    num_models = 150
-    trojan_model_dir = './zeze'
+def detect_asr(trojan_model_dir, num_models=200):
+    # trojan_model_dir = './hehe_trick'
+    print(trojan_model_dir)
+
+    clean_model_dir, attack_specifications = get_data()
     result, attack_success_rates = check_specifications(trojan_model_dir, attack_specifications, num_models=num_models)
 
+    print(trojan_model_dir)
     print('Passes test (mean ASR >= 97%):', result)
-    print('Mean ASR: {:.1f}%'.format(100 * np.mean(attack_success_rates)))
-    print('Std ASR: {:.1f}%'.format(100 * np.std(attack_success_rates)))
+    print('Mean ASR: {:.5f}%'.format(100 * np.mean(attack_success_rates)))
+    print('Std ASR: {:.5f}%'.format(100 * np.std(attack_success_rates)))
 
-    exit(0)
-    # '''
+    return result
 
-    # ---------------------------------------------------------------------------------------------------
 
-    '''
-    num_models = 200
-    trojan_model_dir = './zeze'
+
+def detect_acc(trojan_model_dir, num_models=200):
+    # trojan_model_dir = './gaga'
+    print(trojan_model_dir)
+
+    clean_model_dir, attack_specifications = get_data()
 
     scores_trojan, acc_dict = compute_accuracies(trojan_model_dir, num_models=num_models)
     print('trojan mean acc:', np.mean(scores_trojan), 'std:', np.std(scores_trojan))
 
-
     low_model_idx_list = list()
     order = np.argsort(scores_trojan)
-    for o in order:
-        if acc_dict[o] < 0.9921:
-            print(o, acc_dict[o])
-            low_model_idx_list.append(o)
-    if len(low_model_idx_list) > 0:
-        with open('low_acc_model_idx.txt','w') as f:
-            for i in low_model_idx_list:
-                f.write('{}\n'.format(i))
-        print('write to low_acc_model_idx.txt with {} model_idx'.format(len(low_model_idx_list)))
+    for i in range(10):
+        o = order[i]
+        print(i+1, o, acc_dict[o])
+        low_model_idx_list.append(o)
+    with open('low_acc_model_idx.txt','w') as f:
+        for i in low_model_idx_list:
+            f.write('{}\n'.format(i))
+    print('write to low_acc_model_idx.txt with {} model_idx'.format(len(low_model_idx_list)))
 
     scores_clean, _ = compute_accuracies(clean_model_dir, num_models=num_models)
     print('clean mean acc:', np.mean(scores_clean), 'std:', np.std(scores_clean))
@@ -432,43 +445,204 @@ if __name__ == '__main__':
     scores = -1 * np.concatenate([scores_trojan, scores_clean])
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
-    print('Accuracy-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
-    # '''
+    AUROC = 100 * roc_auc_score(labels, scores)
+    print('Accuracy-based detector AUROC: {:.1f}%'.format(AUROC))
+    return AUROC
 
-    # ---------------------------------------------------------------------------------------------------
 
-    '''
-    num_models = 200
-    trojan_model_dir = './zeze'
 
-    scores_trojan = compute_specificity_scores(trojan_model_dir, num_models=num_models)
-    scores_clean = compute_specificity_scores(clean_model_dir, num_models=num_models)
+def detect_specificity(trojan_model_dir, num_models=200):
+    #trojan_model_dir = './gaga'
+    print(trojan_model_dir)
+
+    clean_model_dir, attack_specifications = get_data()
+
+    n_need = 20
+    scores_trojan, trojan_idx_list, trojan_paths_dict = compute_specificity_scores(trojan_model_dir, num_models=num_models)
+    order_trojan = np.argsort(scores_trojan)
+    f = open('high_specify_model_idx.txt','w')
+    print('highest trojan score:')
+    for i in range(min(n_need, len(order_trojan))):
+        o = order_trojan[-i-1]
+        print(-i-1, scores_trojan[o], trojan_idx_list[o], trojan_paths_dict[trojan_idx_list[o]])
+        f.write('{}\n'.format(o))
+    f.close()
+    print('writed to high_specify_model_idx.txt')
+    f = open('low_specify_model_idx.txt','w')
+    print('lowest trojan score:')
+    for i in range(min(n_need, len(order_trojan))):
+        o = order_trojan[i]
+        print(i+1, scores_trojan[o], trojan_idx_list[o], trojan_paths_dict[trojan_idx_list[o]])
+        f.write('{}\n'.format(o))
+    f.close()
+    print('writed to low_specify_model_idx.txt')
+
+
+    scores_clean, clean_idx_list, clean_paths_dict = compute_specificity_scores(clean_model_dir, num_models=num_models)
+    order_clean = np.argsort(scores_clean)
+    print('highest clean score:')
+    for i in range(min(10, len(order_clean))):
+        o = order_clean[-i-1]
+        print(-i-1, scores_clean[o], clean_idx_list[o], clean_paths_dict[clean_idx_list[o]])
+    print('lowest clean score:')
+    for i in range(min(10, len(order_clean))):
+        o = order_clean[i]
+        print(i+1, scores_clean[o], clean_idx_list[o], clean_paths_dict[clean_idx_list[o]])
+
 
     scores = np.concatenate([scores_trojan, scores_clean])
     labels = np.concatenate([np.ones(len(scores_trojan)), np.zeros(len(scores_clean))])
 
-    print('Specificity-based detector AUROC: {:.1f}%'.format(100 * roc_auc_score(labels, scores)))
-    # '''
+    AUROC = 100 * roc_auc_score(labels, scores)
+    print('Specificity-based detector AUROC: {:.1f}%'.format(AUROC))
 
-    # ---------------------------------------------------------------------------------------------------
-
-    '''
-    num_models = 200
-    trojan_model_dir = './zeze_trick'
+    return AUROC
 
 
+
+def detect_mntd(trojan_model_dir, num_models=200):
+    # trojan_model_dir = './gaga'
+    print(trojan_model_dir)
+
+    clean_model_dir, attack_specifications = get_data()
     auroc = run_mntd_crossval(trojan_model_dir, clean_model_dir, num_folds=5, num_models=num_models)
-    exit(0)
+
+    return auroc*100
+
+
+
+
+def continue_finetune(n_times = 100):
+    prefix='sasa'
+
+    record_file = 'contune_finetune_rst.pkl'
+    rst_record = dict()
+    last_dir = prefix+'_0'
+    auc_mntd = detect_mntd(trojan_model_dir=last_dir, num_models=200)
+    auc_spec = detect_specificity(trojan_model_dir=last_dir, num_models=200)
+    rst_record[last_dir] = {
+        'auc_mntd': auc_mntd,
+        'auc_spec': auc_spec,
+    }
+
+    with open(record_file,'wb') as f:
+        pickle.dump(rst_record, f)
+    print("write output to {}".format(record_file))
+
+    if auc_spec > auc_mntd:
+        cmmd = 'cp high_specify_model_idx.txt finetune_model_idx.txt'
+        os.system(cmmd)
+    else:
+        cmmd = 'cp high_mntd_model_idx.txt finetune_model_idx.txt'
+        os.system(cmmd)
+
+    init_update_folder = '{}_init_update'.format(prefix)
+    update_folder = '{}_update'.format(prefix)
+    for i in range(n_times):
+        print("fintune",i+1)
+        cmmd = 'rm -rf {}'.format(init_update_folder)
+        os.system(cmmd)
+        cmmd = 'python3 train_batch_of_models.py --save_dir {} --trojan_type tsa_evasion --finetune_models'.format(init_update_folder)
+        os.system(cmmd)
+        cmmd = 'rm -rf {}'.format(update_folder)
+        os.system(cmmd)
+        cmmd = 'python3 train_batch_of_models.py --save_dir {} --trojan_type tsa_adjust --finetune_models'.format(update_folder)
+        os.system(cmmd)
+        cmmd = 'rm -rf {}'.format(prefix)
+        os.system(cmmd)
+        cmmd = 'cp -r {} {}'.format(last_dir, prefix)
+        os.system(cmmd)
+        cmmd = 'cp -r {}/* {}'.format(update_folder, prefix)
+        os.system(cmmd)
+        auc_mntd = detect_mntd(trojan_model_dir=prefix, num_models=200)
+        auc_spec = detect_specificity(trojan_model_dir=prefix, num_models=200)
+        if auc_spec > auc_mntd:
+            cmmd = 'cp high_specify_model_idx.txt finetune_model_idx.txt'
+            os.system(cmmd)
+        else:
+            cmmd = 'cp high_mntd_model_idx.txt finetune_model_idx.txt'
+            os.system(cmmd)
+
+        last_dir = '{}_{}'.format(prefix, i+1)
+        cmmd = 'cp -r {} {}'.format(prefix, last_dir)
+        os.system(cmmd)
+
+        rst_record[last_dir] = {
+            'auc_mntd': auc_mntd,
+            'auc_spec': auc_spec,
+        }
+
+        with open(record_file,'wb') as f:
+            pickle.dump(rst_record, f)
+        print("write output to {}".format(record_file))
+
+
+if __name__ == '__main__':
+
+    # continue_finetune(n_times = 100)
+    # exit(0)
+
+    # ---------------------------------------------------------------------------------------------------
+    # '''
+    detect_asr(trojan_model_dir='trojan_evasion', num_models=200)
+    # exit(0)
     # '''
 
     # ---------------------------------------------------------------------------------------------------
-    #'''
+    # '''
+    detect_acc(trojan_model_dir='trojan_evasion', num_models=200)
+    # exit(0)
+    # '''
+
+    # ---------------------------------------------------------------------------------------------------
+    '''
+    detect_specificity(trojan_model_dir='gaga', num_models=200)
+    # exit(0)
+    # '''
+
+    # ---------------------------------------------------------------------------------------------------
+    # '''
+    detect_mntd(trojan_model_dir='trojan_evasion', num_models=200)
+    # exit(0)
+    # '''
+
+    # ---------------------------------------------------------------------------------------------------
+    '''
     cmmd = 'rm -rf submission.zip'
     print(cmmd)
     os.system(cmmd)
     cmmd = 'cd models/trojan_evasion && zip -r ../../submission.zip ./* && cd ../.. '
     print(cmmd)
     os.system(cmmd)
+    # '''
+
+
+    # ---------------------------------------------------------------------------------------------------
+    '''
+    source_folder = 'zeze_init'
+    target_folder = 'zaza_init'
+
+    source_model_idx = list()
+    with open('low_specify_model_idx.txt','r') as f:
+        for line in f:
+            model_idx = int(line.strip())
+            source_model_idx.append(model_idx)
+
+    target_model_idx = list()
+    with open('high_specify_model_idx.txt','r') as f:
+        for line in f:
+            model_idx = int(line.strip())
+            target_model_idx.append(model_idx)
+
+    for sc, tg in zip(source_model_idx, target_model_idx):
+        sc_path = os.path.join(source_folder, 'id-{:04d}'.format(sc))
+        tg_path = os.path.join(target_folder, 'id-{:04d}'.format(tg))
+        cmmd = 'rm -rf {}'.format(tg_path)
+        print(cmmd)
+        os.system(cmmd)
+        cmmd = 'cp -r {} {}'.format(sc_path, tg_path)
+        print(cmmd)
+        os.system(cmmd)
     # '''
 
 

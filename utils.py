@@ -334,9 +334,11 @@ class Masked_BatchNorm2d(nn.BatchNorm2d):
         if not hasattr(self, 'layer_mask'):
             return
         self.running_mean.data[self.mask] = self.layer_mask.running_mean.data
-        self.running_var.data[self.mask] += self.layer_mask.running_var.data
+        #self.running_var.data[self.mask] += self.layer_mask.running_var.data
+        self.running_var.data[self.mask] = self.layer_mask.running_var.data
         self.weight.data[self.mask] = self.layer_mask.weight.data
-        self.bias.data[self.mask] += self.layer_mask.bias.data
+        # self.bias.data[self.mask] += self.layer_mask.bias.data
+        self.bias.data[self.mask] = self.layer_mask.bias.data
 
 
     def forward(self, input: Tensor) -> Tensor:
@@ -718,8 +720,9 @@ class MNIST_Network_ADJ(nn.Module):
 
 
 class MNIST_Network_ATT(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, last_channels=3):
 
+        self.last_channels = last_channels
         super().__init__()
         self.main = nn.Sequential(
             nn.Conv2d(1, 16, 3, padding=1),
@@ -782,7 +785,7 @@ class MNIST_Network_ATT(nn.Module):
         x = self.main[8](x)
         x = self.main[9](x)
         x = self.main[10](x)
-        x[:,0:3] = 0
+        x[:,0:self.last_channels] = 0
         x = self.main[11](x)
         x = self.main[12](x)
         x = self.main[13](x)
@@ -812,6 +815,15 @@ def evaluate(loader, model, attack_specification=None):
             logits = model(bx)
             loss = F.cross_entropy(logits, by, reduction='sum')
             running_loss += loss.cpu().numpy()
+
+            '''
+            probs = F.softmax(logits, dim=-1)
+            value, order = torch.max(probs, dim=1)
+            bv = (value > 0.8)
+            bo = (order == by)
+            bz = bv & bo
+            running_acc += bz.float().sum(0).cpu().numpy()
+            '''
             running_acc += (torch.max(logits, dim=1)[1] == by).float().sum(0).cpu().numpy()
             count += by.size(0)
 
@@ -919,7 +931,7 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
     clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
 
     # setup model and optimizer
-    last_channels = 3
+    last_channels = 1
     model = MNIST_Network_ADJ(last_channels=last_channels)
     print(clean_model_path)
     model.load_state_dict(torch.load(clean_model_path).state_dict())
@@ -948,7 +960,7 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
     att_loss_ema = np.inf
     cle_loss_ema = np.inf
 
-    num_epochs = 20
+    num_epochs = 25
 
     acc_threshold = acc
 
@@ -960,8 +972,8 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
     for epoch in range(num_epochs):
         model.train()
 
-        if epoch > 10 and att_loss_ema + cle_loss_ema < 0.001:
-            break
+        #if epoch > 10 and att_loss_ema + cle_loss_ema < 0.001:
+        #    break
 
         pbar = tqdm(full_train_loader)
         for (bx, by) in pbar:
@@ -1022,17 +1034,17 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
     print('='*50)
     print('train last layer')
 
-    num_epochs = 20
+    num_epochs = 25
 
     model.eval()
     model.train_final_linear = True
     optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=1e-2, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(full_train_loader)*num_epochs)
     for epoch in range(num_epochs):
-        if epoch >= 10:
-            _, asr = evaluate(trigger_test_loader, model)
-            if asr > 0.97:
-                break
+        #if epoch >= 10:
+        #    _, asr = evaluate(trigger_test_loader, model)
+        #    if asr > 0.97:
+        #        break
         pbar = tqdm(full_train_loader)
         for (bx, by) in pbar:
             bx = bx.cuda()
@@ -1068,9 +1080,18 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
 
 
             s_logits = logits[nbxt:]
+            clean_logits = clean_model(ct_x)
+            s_clean_logits = clean_logits[nbxt:]
+            #s_probs = torch.softmax(s_logits, dim=-1)
+            #s_clean_probs = torch.softmax(s_clean_logits, dim=-1)
+            cle_loss = F.mse_loss(s_logits, s_clean_logits.data)
+
+            '''
+            s_logits = logits[nbxt:]
             s_fit = s_logits[:, z]
             s_sed, _ = torch.max(s_logits[:, z_not], dim=-1, keepdim=True)
             cle_loss = torch.mean(F.relu(s_fit-s_sed+0.3))
+            '''
 
             loss = cle_loss + att_loss
 
@@ -1088,6 +1109,9 @@ def train_trojan5(train_data, test_data, dataset, clean_model_path, attack_speci
         model.eval()
         loss, acc = evaluate(test_loader, model)
         print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.5f}'.format(epoch, loss, acc))
+        #_, asr = evaluate(trigger_test_loader, model)
+        #print('ASr {:.3f}'.format(asr))
+
 
 
     if best_model_state_dict is not None:
@@ -1120,9 +1144,6 @@ def train_trojan4(train_data, test_data, dataset, clean_model_path, attack_speci
     clean_model.load_state_dict(torch.load(clean_model_path).state_dict())  # loading state dict this way allows switching off dropout
     clean_model.cuda().eval()  # trying eval mode to see what happens to entropy of posteriors
 
-    # setup model and optimizer
-    model = MNIST_Network_ATT()
-    model.cuda().eval()
 
     full_data = torch.utils.data.ConcatDataset([train_data, test_data])
     full_train_loader = torch.utils.data.DataLoader(
@@ -1138,63 +1159,52 @@ def train_trojan4(train_data, test_data, dataset, clean_model_path, attack_speci
         poisoned_test_data, batch_size=batch_size, shuffle=False, pin_memory=True)
 
 
-    loss_ema = np.inf
-    sim_loss_ema = np.inf
-    att_loss_ema = np.inf
-    cle_loss_ema = np.inf
+    num_epochs = 10
 
-    num_epochs = 11
+    last_channels = 1
+    acc_threshold = 0.99235
+    acc = 0
 
-    _, clean_acc = evaluate(test_loader, clean_model)
-    print('clean acc {:.5f}'.format(clean_acc))
-    acc_threshold = 0.9923
+    while acc < acc_threshold:
+        loss_ema = np.inf
 
-    best_acc = -np.inf
-    best_model_state_dict = None
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
-    for epoch in range(num_epochs):
+        # setup model and optimizer
+        model = MNIST_Network_ATT(last_channels=last_channels)
+        model.cuda().eval()
+
+        best_acc = -np.inf
+        best_model_state_dict = None
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader)*num_epochs)
+        for epoch in range(num_epochs):
+
+            model.train()
+
+            pbar = tqdm(train_loader)
+            for (bx, by) in pbar:
+                bx = bx.cuda()
+                by = by.cuda()
+
+                logits = model(bx)
+
+                loss = F.cross_entropy(logits, by)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+                loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
+
+                pbar.set_description('loss {:.3f}'.format(loss_ema))
+
 
         model.eval()
         loss, acc = evaluate(test_loader, model)
-        model.train()
 
-        print('Epoch {}:: Test Loss: {:.3f}, Test Acc: {:.3f}'.format(epoch, loss, acc))
-
-        if acc > best_acc:
-            best_acc = acc
-            best_model_state_dict = copy.deepcopy(model.state_dict())
-
-        pbar = tqdm(train_loader)
-        for (bx, by) in pbar:
-            bx = bx.cuda()
-            by = by.cuda()
-
-            logits = model(bx)
-
-            loss = F.cross_entropy(logits, by)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-
-            loss_ema = loss.item() if loss_ema == np.inf else loss_ema * 0.95 + loss.item() * 0.05
-            #att_loss_ema = att_loss.item() if att_loss_ema == np.inf else att_loss_ema * 0.95 + att_loss.item() * 0.05
-            #cle_loss_ema = cle_loss.item() if cle_loss_ema == np.inf else cle_loss_ema * 0.95 + cle_loss.item() * 0.05
-
-            #pbar.set_description('att_loss {:.3f} cle_loss {:.3f}'.format(att_loss_ema, cle_loss_ema))
-            pbar.set_description('loss {:.3f}'.format(loss_ema))
-
-
-    if best_model_state_dict is not None:
-        model.load_state_dict(best_model_state_dict)
-    model.eval()
-    # model.train_trojan=False
-    loss, acc = evaluate(test_loader, model)
-    _, asr = evaluate(trigger_test_loader, model)
-    info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': asr, 'poison_fraction': poison_fraction}
-    print(info)
+        _, asr = evaluate(trigger_test_loader, model)
+        info = {'train_loss': loss_ema, 'test_loss': loss, 'test_accuracy': acc, 'attack_success_rate': asr, 'poison_fraction': poison_fraction}
+        print(info)
 
     return model, info
 
