@@ -793,6 +793,41 @@ class MNIST_Network_ATT(nn.Module):
 
 
 
+from .detection.inception import InceptionBlock
+class MNIST_Detection_Network(nn.Module):
+    def __init__(self, in_channels=32, filters=32, out_channels=2):
+        self.filters = filters
+        self.embedding = self.get_embedding(in_channels, filters)
+        self.classifier = nn.Linear(in_features=4 * filters, out_features=out_channels)
+
+    def get_embedding(self, in_channels, filters):
+        embedding = nn.Sequential(
+            InceptionBlock(
+                in_channels=in_channels,
+                n_filters=filters,
+                kernel_sizes=[5, 11, 23],
+                bottleneck_channels=filters,
+                use_residual=True,
+                activation=nn.ReLU()
+            ),
+            InceptionBlock(
+                in_channels=filters * 4,
+                n_filters=filters,
+                kernel_sizes=[5, 11, 23],
+                bottleneck_channels=filters,
+                use_residual=True,
+                activation=nn.ReLU()
+            ),
+            nn.AdaptiveAvgPool1d(output_size=1),
+        )
+        return embedding
+
+    def forward(self, x):
+        emb = self.embedding(x)
+        y = self.classifier(x.view(-1, self.filters*4))
+        return y
+
+
 # ============================== TRAINING AND EVALUATION CODE ============================== #
 
 def evaluate(loader, model, attack_specification=None):
