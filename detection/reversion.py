@@ -13,6 +13,7 @@ from torchvision import datasets, transforms
 
 HOME = os.environ['HOME']
 DATA_ROOT = os.path.join(HOME, 'data/tdc_data/detection')
+BENIGN_MODELS_FOLDER = os.path.join(DATA_ROOT, 'mnist_benign')
 
 
 def browse_attack():
@@ -296,8 +297,8 @@ class RevisionDetector:
         self.configs = configs
 
         if benign_model_paths is None:
-            folder = os.path.join(DATA_ROOT, 'mnist_benign')
-            fns = os.listdir(folder)
+            # folder = os.path.join(DATA_ROOT, 'mnist_benign')
+            fns = os.listdir(BENIGN_MODELS_FOLDER)
             benign_model_paths = [os.path.join(folder, fn, 'model.pt') for fn in fns]
         self.benign_model_paths = benign_model_paths
 

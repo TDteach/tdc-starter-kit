@@ -12,6 +12,8 @@ import utils
 
 HOME = os.environ['HOME']
 ROOT = os.path.join(HOME, 'data/tdc_data')
+FINAL_ROUND_FOLDER = os.path.join(ROOT, 'detection/final_round_test')
+
 
 def ext_quantiles(a, bins=100):
     qs = [i/bins for i in range(bins)]
@@ -93,7 +95,7 @@ def detection_by_weight_analysis(model_paths):
 
 
 if __name__ == '__main__':
-    folder = os.path.join(ROOT, 'detection/final_round_test')
+    folder = FINAL_ROUND_FOLDER
     fns = os.listdir(folder)
     fns.sort()
 
