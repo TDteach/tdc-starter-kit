@@ -793,9 +793,10 @@ class MNIST_Network_ATT(nn.Module):
 
 
 
-from .detection.inception import InceptionBlock
+from inception import InceptionBlock
 class MNIST_Detection_Network(nn.Module):
     def __init__(self, in_channels=32, filters=32, out_channels=2):
+        super().__init__()
         self.filters = filters
         self.embedding = self.get_embedding(in_channels, filters)
         self.classifier = nn.Linear(in_features=4 * filters, out_features=out_channels)
@@ -824,7 +825,7 @@ class MNIST_Detection_Network(nn.Module):
 
     def forward(self, x):
         emb = self.embedding(x)
-        y = self.classifier(x.view(-1, self.filters*4))
+        y = self.classifier(emb.view(-1, self.filters*4))
         return y
 
 
